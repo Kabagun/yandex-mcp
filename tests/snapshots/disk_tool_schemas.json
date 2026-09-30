@@ -870,7 +870,8 @@
         "type": "object"
       }
     },
-    "$ref": "#/$defs/DiskResource"
+    "$ref": "#/$defs/DiskResource",
+    "type": "object"
   },
   "DiskResourcePage": {
     "$defs": {
@@ -1049,7 +1050,8 @@
         "type": "object"
       }
     },
-    "$ref": "#/$defs/DiskResourcePage"
+    "$ref": "#/$defs/DiskResourcePage",
+    "type": "object"
   },
   "DiskSearchInput": {
     "additionalProperties": false,
