@@ -60,7 +60,7 @@ def test_configured_static_scope_never_exceeds_server_permissions() -> None:
             disk_read=True,
             disk_write=False,
             disk_delete=False,
-            yandex_disk_enabled=False,
+            yandex_disk_enabled=True,
             yandex_wiki_enabled=False,
         )
     )
@@ -99,12 +99,11 @@ async def test_every_registered_tool_declares_one_enforced_workspace_scope(tmp_p
             wiki_upload_allowed_dirs=[str(tmp_path)],
             disk_upload_url_allowed_hosts=["downloads.example.test"],
             disk_allowed_public_keys=["public-key"],
-            disk_allow_global_destructive=True,
         )
     )
 
     tools = await application.mcp_server.list_tools()
-    assert len(tools) == 54
+    assert len(tools) == 53
     for tool in tools:
         assert tool.meta is not None
         scopes = tool.meta.get("required_scopes")

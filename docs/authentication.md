@@ -29,3 +29,16 @@ Never reuse the MCP bearer, cursor key, encryption key, Yandex client secret, or
 ## Network binding
 
 Loopback HTTP is allowed for development. A non-loopback listener requires an authenticated MCP mode, HTTPS issuer/resource/callback URLs, exact non-wildcard `MCP_ALLOWED_HOSTS` and `MCP_ALLOWED_ORIGINS`, and persistent cursor keys. TLS normally terminates at a reverse proxy. Forwarded scheme/host headers are honored only when the direct peer belongs to `MCP_TRUSTED_PROXY_CIDRS`.
+
+## Dedicated Disk and Mail
+
+See [profile configuration and mail contracts](profiles.md). Dedicated service
+profiles have independent upstream OAuth clients, public issuers and Redis key
+namespaces. Disk keeps workspace scopes; Mail requires `mail:*` scopes and a
+Yandex ID email in its encrypted downstream credential. Global Trash purge is
+prohibited. Wiki remains available only in the legacy workspace profile.
+
+The OAuth revocation endpoint is enabled and advertised at `/revoke`. A bounded
+form adapter compensates for the pinned SDK requiring an explicit secret field
+even for public clients; confidential-client authentication and token ownership
+checks remain in the SDK.

@@ -2,6 +2,7 @@ import httpx
 import pytest
 
 from yandex_workspace_mcp.clients.disk import YandexDiskClient
+from yandex_workspace_mcp.models.errors import PermissionDenied
 
 
 @pytest.mark.asyncio
@@ -39,7 +40,6 @@ async def test_trash_clients_use_exact_endpoints_and_preserve_origin_for_policy(
                 },
             ),
             httpx.Response(201),
-            httpx.Response(204),
         ]
     )
 
@@ -60,16 +60,16 @@ async def test_trash_clients_use_exact_endpoints_and_preserve_origin_for_policy(
     restored = await client.restore_from_trash(
         "/a.txt", destination_path="/Work/restored.txt", overwrite=True
     )
-    emptied = await client.empty_trash()
+    with pytest.raises(PermissionDenied):
+        await client.empty_trash()
 
     assert page.items[0].origin_path == "/Work/a.txt"
     assert item.origin_path == "/Work/a.txt"
-    assert restored.status == emptied.status == "completed"
+    assert restored.status == "completed"
     assert [(request.method, request.url.path) for request in requests] == [
         ("GET", "/v1/disk/trash/resources"),
         ("GET", "/v1/disk/trash/resources"),
         ("PUT", "/v1/disk/trash/resources/restore"),
-        ("DELETE", "/v1/disk/trash/resources"),
     ]
     assert dict(requests[2].url.params) == {
         "path": "/a.txt",

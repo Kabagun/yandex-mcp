@@ -8,17 +8,21 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from mcp.server import MCPServer
+from mcp.server.auth.middleware.client_auth import ClientAuthenticator
 from mcp.server.auth.provider import AccessToken, TokenVerifier
-from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions
+from mcp.server.auth.routes import cors_middleware
+from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, RevocationOptions
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import AnyHttpUrl
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
+from starlette.routing import Route
 from starlette.types import ASGIApp
 
+from . import __version__
 from .auth.credentials import StaticCredentialProvider, StoredCredentialProvider
 from .auth.models import YandexIAMCredential, YandexOAuthCredential
-from .auth.oauth import YandexMcpOAuthProvider, YandexOAuthCallback
+from .auth.oauth import CompatibleRevocationHandler, YandexMcpOAuthProvider, YandexOAuthCallback
 from .auth.recovery import (
     InMemoryRecoveryTokenStore,
     RecoveryTokenStore,
@@ -34,6 +38,7 @@ from .auth.scopes import (
 from .auth.stores import InMemoryTokenStore
 from .clients.base import RequestCredentials
 from .clients.disk import YandexDiskClient
+from .clients.mail import YandexMailClient
 from .clients.signed import SignedTransferClient
 from .clients.wiki import YandexWikiClient
 from .config import AuthStoreBackend, McpAuthMode, Settings, YandexAuthMode, get_settings
@@ -43,9 +48,11 @@ from .policies.cursors import CursorCodec, CursorKeyRing
 from .security.audit import AuditContextMiddleware
 from .security.transport import RegistrationSourceMiddleware, TrustedProxyHeadersMiddleware
 from .services.disk import DiskService
+from .services.mail import MailService
 from .services.wiki import WikiService
 from .services.workspace import WorkspaceService
 from .tools import register_common_tools, register_disk_tools, register_wiki_tools
+from .tools.mail import register_mail_tools
 
 
 class StaticTokenVerifier(TokenVerifier):
@@ -73,6 +80,7 @@ class ApplicationDependencies:
     service_factory: ServiceFactory | None = None
     auth_store_factory: ClientFactory | None = None
     oauth_http_client_factory: ClientFactory | None = None
+    mail_client_factory: ClientFactory | None = None
 
 
 @dataclass(slots=True)
@@ -89,6 +97,8 @@ class ApplicationState:
     auth_store: Any | None
     oauth_provider: YandexMcpOAuthProvider | None
     oauth_callback: YandexOAuthCallback | None
+    mail_client: Any | None = None
+    mail_service: MailService | None = None
 
 
 class Application:
@@ -113,11 +123,7 @@ class Application:
         self._closed = False
         self._local_principal = WorkspacePrincipal(
             principal_id="trusted-local",
-            scopes=scopes_for_permissions(
-                can_read=settings.disk_read or settings.wiki_read,
-                can_write=settings.disk_write or settings.wiki_write,
-                can_delete=settings.disk_delete or settings.wiki_delete,
-            ),
+            scopes=_permission_scopes(settings),
         )
 
     @property
@@ -150,7 +156,11 @@ class Application:
         )
         static_credential_present = token or self.settings.yandex_iam_token is not None
         if (
-            (self.settings.yandex_disk_enabled or self.settings.yandex_wiki_enabled)
+            (
+                self.settings.yandex_disk_enabled
+                or self.settings.yandex_wiki_enabled
+                or self.settings.yandex_mail_enabled
+            )
             and self.settings.yandex_auth_mode is not YandexAuthMode.MULTI_USER
             and not static_credential_present
         ):
@@ -181,6 +191,7 @@ class Application:
                     organization_id=self.settings.yandex_wiki_org_id,
                     cloud_organization=self.settings.yandex_wiki_is_cloud_org,
                     client=callback_client,
+                    require_email=self.settings.yandex_mail_enabled,
                 )
                 self._opened_resources.append(self.oauth_callback)
                 self._credential_provider = StoredCredentialProvider(
@@ -232,6 +243,26 @@ class Application:
                 )
                 wiki_client = wiki_factory()
                 self._opened_resources.append(wiki_client)
+
+            mail_client = None
+            mail_service = None
+            if self.settings.yandex_mail_enabled:
+                mail_factory = self.dependencies.mail_client_factory or (
+                    lambda: YandexMailClient(
+                        credential_provider=self._mail_credentials,
+                        max_message_bytes=self.settings.mail_max_message_bytes,
+                        max_attachment_bytes=self.settings.mail_max_attachment_bytes,
+                        timeout_seconds=self.settings.mail_timeout_seconds,
+                    )
+                )
+                mail_client = mail_factory()
+                self._opened_resources.append(mail_client)
+                mail_service = MailService(
+                    mail_client,
+                    can_read=self.settings.mail_read,
+                    can_write=self.settings.mail_write,
+                    can_delete=self.settings.mail_delete,
+                )
 
             cursor_codec = self._cursor_codec()
             recovery_store = self._recovery_store()
@@ -321,6 +352,8 @@ class Application:
                 auth_store=self.auth_store,
                 oauth_provider=self.oauth_provider,
                 oauth_callback=self.oauth_callback,
+                mail_client=mail_client,
+                mail_service=mail_service,
             )
             return self.state
         except BaseException:
@@ -338,6 +371,20 @@ class Application:
             scheme=selected.scheme,
             headers=selected.headers if include_organization else {},
         )
+
+    async def _mail_credentials(self) -> YandexOAuthCredential:
+        if self._credential_provider is None:
+            raise ConfigurationError("A Yandex credential provider is not active.")
+        credential = await self._credential_provider.resolve(self.principal)
+        if not isinstance(credential, YandexOAuthCredential) or not credential.email:
+            raise ConfigurationError("Mail requires an authorized account email.")
+        return credential
+
+    def require_mail_service(self) -> MailService:
+        """Return the lifespan-owned Mail service for this isolated profile."""
+        if not self.state or not self.state.mail_service:
+            raise ConfigurationError("Mail service is not active.")
+        return self.state.mail_service
 
     def _cursor_codec(self) -> CursorCodec:
         if self.dependencies.cursor_keys:
@@ -402,6 +449,24 @@ class Application:
         return self.oauth_callback
 
 
+def _permission_scopes(settings: Settings):
+    if settings.yandex_mail_enabled:
+        return scopes_for_permissions(
+            can_read=settings.mail_read,
+            can_write=settings.mail_write,
+            can_delete=settings.mail_delete,
+            service="mail",
+        )
+    return scopes_for_permissions(
+        can_read=(settings.yandex_disk_enabled and settings.disk_read)
+        or (settings.yandex_wiki_enabled and settings.wiki_read),
+        can_write=(settings.yandex_disk_enabled and settings.disk_write)
+        or (settings.yandex_wiki_enabled and settings.wiki_write),
+        can_delete=(settings.yandex_disk_enabled and settings.disk_delete)
+        or (settings.yandex_wiki_enabled and settings.wiki_delete),
+    )
+
+
 def create_application(
     settings: Settings,
     dependencies: ApplicationDependencies | None = None,
@@ -422,6 +487,7 @@ def create_application(
             auth_store = RedisTokenStore(
                 keys,
                 url=redis_url,
+                prefix=settings.auth_storage_prefix,
                 registration_cap=settings.mcp_client_registration_cap,
             )
         else:
@@ -429,18 +495,19 @@ def create_application(
                 keys,
                 registration_cap=settings.mcp_client_registration_cap,
             )
-        permission_scopes = scopes_for_permissions(
-            can_read=settings.disk_read or settings.wiki_read,
-            can_write=settings.disk_write or settings.wiki_write,
-            can_delete=settings.disk_delete or settings.wiki_delete,
-        )
+        permission_scopes = _permission_scopes(settings)
         oauth_provider = YandexMcpOAuthProvider(
             store=auth_store,
             issuer_url=settings.mcp_issuer_url,
             resource_server_url=settings.mcp_resource_server_url,
             yandex_client_id=settings.yandex_oauth_client_id or "",
             yandex_callback_url=settings.mcp_oauth_callback_url or "",
-            valid_scopes=[scope.value for scope in permission_scopes],
+            valid_scopes=sorted(scope.value for scope in permission_scopes),
+            upstream_scopes=(
+                ("login:email", "mail:imap_full", "mail:smtp")
+                if settings.yandex_mail_enabled
+                else ()
+            ),
             client_secret_expiry_seconds=settings.mcp_client_secret_expiry_seconds,
         )
 
@@ -452,11 +519,7 @@ def create_application(
     token_verifier = None
     auth_settings = None
     if settings.mcp_auth_mode is McpAuthMode.STATIC and settings.mcp_auth_token:
-        permission_ceiling = scopes_for_permissions(
-            can_read=settings.disk_read or settings.wiki_read,
-            can_write=settings.disk_write or settings.wiki_write,
-            can_delete=settings.disk_delete or settings.wiki_delete,
-        )
+        permission_ceiling = _permission_scopes(settings)
         principal_scopes = effective_static_scopes(
             settings.mcp_static_scopes,
             permission_ceiling,
@@ -481,10 +544,11 @@ def create_application(
                 default_scopes=list(oauth_provider.valid_scopes) if oauth_provider else [],
                 client_secret_expiry_seconds=settings.mcp_client_secret_expiry_seconds,
             ),
+            revocation_options=RevocationOptions(enabled=True),
         )
     mcp = MCPServer(
-        name="yandex-workspace-mcp",
-        version="0.1.0",
+        name=f"yandex-{settings.mcp_profile}-mcp",
+        version=__version__,
         auth=auth_settings,
         auth_server_provider=oauth_provider,
         token_verifier=token_verifier,
@@ -509,9 +573,11 @@ def create_application(
     async def healthz(_request: Request) -> Response:
         return JSONResponse({"status": "ok"}, headers={"Cache-Control": "no-store"})
 
-    register_common_tools(mcp, application)
+    if settings.mcp_profile != "mail":
+        register_common_tools(mcp, application)
     register_disk_tools(mcp, application, settings)
     register_wiki_tools(mcp, application, settings)
+    register_mail_tools(mcp, application, settings)
     return application
 
 
@@ -553,7 +619,7 @@ def create_http_app(application: Application) -> ASGIApp:
         Settings(**settings.model_dump())
     except Exception as exc:
         raise ConfigurationError("HTTP application settings failed validation.") from exc
-    app: ASGIApp = application.mcp_server.streamable_http_app(
+    http_app = application.mcp_server.streamable_http_app(
         streamable_http_path="/mcp",
         json_response=True,
         stateless_http=True,
@@ -561,7 +627,21 @@ def create_http_app(application: Application) -> ASGIApp:
         transport_security=transport_security_settings(settings),
         host=settings.mcp_host,
     )
-    app = RegistrationSourceMiddleware(app)
+    if application.oauth_provider is not None:
+        handler = CompatibleRevocationHandler(
+            application.oauth_provider, ClientAuthenticator(application.oauth_provider)
+        )
+        for index, route in enumerate(http_app.routes):
+            if isinstance(route, Route) and route.path == "/revoke":
+                http_app.routes[index] = Route(
+                    "/revoke",
+                    endpoint=cors_middleware(handler.handle, ["POST", "OPTIONS"]),
+                    methods=["POST", "OPTIONS"],
+                )
+                break
+        else:
+            raise ConfigurationError("OAuth revocation route is missing.")
+    app: ASGIApp = RegistrationSourceMiddleware(http_app)
     if settings.mcp_trusted_proxy_cidrs:
         app = TrustedProxyHeadersMiddleware(app, settings.mcp_trusted_proxy_cidrs)
     return app

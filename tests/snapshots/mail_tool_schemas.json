@@ -1,0 +1,2543 @@
+{
+  "models": {
+    "MailAttachment": {
+      "additionalProperties": false,
+      "description": "Opaque part ID scoped to the message reference, without binary content.",
+      "properties": {
+        "attachment_id": {
+          "title": "Attachment Id",
+          "type": "string"
+        },
+        "content_type": {
+          "title": "Content Type",
+          "type": "string"
+        },
+        "filename": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Filename"
+        },
+        "size_bytes": {
+          "minimum": 0,
+          "title": "Size Bytes",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "attachment_id",
+        "content_type",
+        "size_bytes"
+      ],
+      "title": "MailAttachment",
+      "type": "object"
+    },
+    "MailAttachmentContent": {
+      "additionalProperties": false,
+      "properties": {
+        "attachment_id": {
+          "title": "Attachment Id",
+          "type": "string"
+        },
+        "content_base64": {
+          "title": "Content Base64",
+          "type": "string"
+        },
+        "content_type": {
+          "title": "Content Type",
+          "type": "string"
+        },
+        "filename": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Filename"
+        },
+        "size_bytes": {
+          "minimum": 0,
+          "title": "Size Bytes",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "attachment_id",
+        "content_type",
+        "size_bytes",
+        "content_base64"
+      ],
+      "title": "MailAttachmentContent",
+      "type": "object"
+    },
+    "MailFolder": {
+      "additionalProperties": false,
+      "description": "Selectable folder name and server-advertised special-use flags.",
+      "properties": {
+        "delimiter": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Delimiter"
+        },
+        "flags": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Flags",
+          "type": "array"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "selectable": {
+          "default": true,
+          "title": "Selectable",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "MailFolder",
+      "type": "object"
+    },
+    "MailFolderList": {
+      "$defs": {
+        "MailFolder": {
+          "additionalProperties": false,
+          "description": "Selectable folder name and server-advertised special-use flags.",
+          "properties": {
+            "delimiter": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Delimiter"
+            },
+            "flags": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Flags",
+              "type": "array"
+            },
+            "name": {
+              "title": "Name",
+              "type": "string"
+            },
+            "selectable": {
+              "default": true,
+              "title": "Selectable",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "title": "MailFolder",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "folders": {
+          "items": {
+            "$ref": "#/$defs/MailFolder"
+          },
+          "title": "Folders",
+          "type": "array"
+        }
+      },
+      "required": [
+        "folders"
+      ],
+      "title": "MailFolderList",
+      "type": "object"
+    },
+    "MailMessage": {
+      "$defs": {
+        "MailAttachment": {
+          "additionalProperties": false,
+          "description": "Opaque part ID scoped to the message reference, without binary content.",
+          "properties": {
+            "attachment_id": {
+              "title": "Attachment Id",
+              "type": "string"
+            },
+            "content_type": {
+              "title": "Content Type",
+              "type": "string"
+            },
+            "filename": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Filename"
+            },
+            "size_bytes": {
+              "minimum": 0,
+              "title": "Size Bytes",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "attachment_id",
+            "content_type",
+            "size_bytes"
+          ],
+          "title": "MailAttachment",
+          "type": "object"
+        },
+        "MailMessageRef": {
+          "additionalProperties": false,
+          "description": "Account-bound IMAP UID reference; invalid after mailbox UIDVALIDITY changes.",
+          "properties": {
+            "account_id": {
+              "pattern": "^[a-f0-9]{64}$",
+              "title": "Account Id",
+              "type": "string"
+            },
+            "folder": {
+              "maxLength": 512,
+              "minLength": 1,
+              "title": "Folder",
+              "type": "string"
+            },
+            "uid": {
+              "maximum": 4294967295,
+              "minimum": 1,
+              "title": "Uid",
+              "type": "integer"
+            },
+            "uid_validity": {
+              "maximum": 4294967295,
+              "minimum": 1,
+              "title": "Uid Validity",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "account_id",
+            "folder",
+            "uid",
+            "uid_validity"
+          ],
+          "title": "MailMessageRef",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "attachments": {
+          "items": {
+            "$ref": "#/$defs/MailAttachment"
+          },
+          "title": "Attachments",
+          "type": "array"
+        },
+        "cc": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Cc",
+          "type": "array"
+        },
+        "date": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Date"
+        },
+        "html": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Html"
+        },
+        "is_read": {
+          "default": false,
+          "title": "Is Read",
+          "type": "boolean"
+        },
+        "message_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Message Id"
+        },
+        "reference": {
+          "$ref": "#/$defs/MailMessageRef"
+        },
+        "reply_to": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Reply To",
+          "type": "array"
+        },
+        "sender": {
+          "default": "",
+          "title": "Sender",
+          "type": "string"
+        },
+        "size_bytes": {
+          "minimum": 0,
+          "title": "Size Bytes",
+          "type": "integer"
+        },
+        "subject": {
+          "default": "",
+          "title": "Subject",
+          "type": "string"
+        },
+        "text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Text"
+        },
+        "to": {
+          "items": {
+            "type": "string"
+          },
+          "title": "To",
+          "type": "array"
+        }
+      },
+      "required": [
+        "reference",
+        "size_bytes"
+      ],
+      "title": "MailMessage",
+      "type": "object"
+    },
+    "MailMessagePage": {
+      "$defs": {
+        "MailMessageRef": {
+          "additionalProperties": false,
+          "description": "Account-bound IMAP UID reference; invalid after mailbox UIDVALIDITY changes.",
+          "properties": {
+            "account_id": {
+              "pattern": "^[a-f0-9]{64}$",
+              "title": "Account Id",
+              "type": "string"
+            },
+            "folder": {
+              "maxLength": 512,
+              "minLength": 1,
+              "title": "Folder",
+              "type": "string"
+            },
+            "uid": {
+              "maximum": 4294967295,
+              "minimum": 1,
+              "title": "Uid",
+              "type": "integer"
+            },
+            "uid_validity": {
+              "maximum": 4294967295,
+              "minimum": 1,
+              "title": "Uid Validity",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "account_id",
+            "folder",
+            "uid",
+            "uid_validity"
+          ],
+          "title": "MailMessageRef",
+          "type": "object"
+        },
+        "MailMessageSummary": {
+          "additionalProperties": false,
+          "properties": {
+            "date": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Date"
+            },
+            "is_read": {
+              "default": false,
+              "title": "Is Read",
+              "type": "boolean"
+            },
+            "message_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Message Id"
+            },
+            "reference": {
+              "$ref": "#/$defs/MailMessageRef"
+            },
+            "sender": {
+              "default": "",
+              "title": "Sender",
+              "type": "string"
+            },
+            "size_bytes": {
+              "minimum": 0,
+              "title": "Size Bytes",
+              "type": "integer"
+            },
+            "subject": {
+              "default": "",
+              "title": "Subject",
+              "type": "string"
+            },
+            "to": {
+              "items": {
+                "type": "string"
+              },
+              "title": "To",
+              "type": "array"
+            }
+          },
+          "required": [
+            "reference",
+            "size_bytes"
+          ],
+          "title": "MailMessageSummary",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Newest-first results from at most 1,000 UID values per request.",
+      "properties": {
+        "messages": {
+          "items": {
+            "$ref": "#/$defs/MailMessageSummary"
+          },
+          "title": "Messages",
+          "type": "array"
+        },
+        "next_before_uid": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Next Before Uid"
+        },
+        "partial_scan": {
+          "default": false,
+          "title": "Partial Scan",
+          "type": "boolean"
+        },
+        "scan_end_uid": {
+          "minimum": 0,
+          "title": "Scan End Uid",
+          "type": "integer"
+        },
+        "scan_start_uid": {
+          "minimum": 0,
+          "title": "Scan Start Uid",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "messages",
+        "scan_start_uid",
+        "scan_end_uid"
+      ],
+      "title": "MailMessagePage",
+      "type": "object"
+    },
+    "MailMessageRef": {
+      "additionalProperties": false,
+      "description": "Account-bound IMAP UID reference; invalid after mailbox UIDVALIDITY changes.",
+      "properties": {
+        "account_id": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Account Id",
+          "type": "string"
+        },
+        "folder": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Folder",
+          "type": "string"
+        },
+        "uid": {
+          "maximum": 4294967295,
+          "minimum": 1,
+          "title": "Uid",
+          "type": "integer"
+        },
+        "uid_validity": {
+          "maximum": 4294967295,
+          "minimum": 1,
+          "title": "Uid Validity",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "account_id",
+        "folder",
+        "uid",
+        "uid_validity"
+      ],
+      "title": "MailMessageRef",
+      "type": "object"
+    },
+    "MailMessageSummary": {
+      "$defs": {
+        "MailMessageRef": {
+          "additionalProperties": false,
+          "description": "Account-bound IMAP UID reference; invalid after mailbox UIDVALIDITY changes.",
+          "properties": {
+            "account_id": {
+              "pattern": "^[a-f0-9]{64}$",
+              "title": "Account Id",
+              "type": "string"
+            },
+            "folder": {
+              "maxLength": 512,
+              "minLength": 1,
+              "title": "Folder",
+              "type": "string"
+            },
+            "uid": {
+              "maximum": 4294967295,
+              "minimum": 1,
+              "title": "Uid",
+              "type": "integer"
+            },
+            "uid_validity": {
+              "maximum": 4294967295,
+              "minimum": 1,
+              "title": "Uid Validity",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "account_id",
+            "folder",
+            "uid",
+            "uid_validity"
+          ],
+          "title": "MailMessageRef",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "date": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Date"
+        },
+        "is_read": {
+          "default": false,
+          "title": "Is Read",
+          "type": "boolean"
+        },
+        "message_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Message Id"
+        },
+        "reference": {
+          "$ref": "#/$defs/MailMessageRef"
+        },
+        "sender": {
+          "default": "",
+          "title": "Sender",
+          "type": "string"
+        },
+        "size_bytes": {
+          "minimum": 0,
+          "title": "Size Bytes",
+          "type": "integer"
+        },
+        "subject": {
+          "default": "",
+          "title": "Subject",
+          "type": "string"
+        },
+        "to": {
+          "items": {
+            "type": "string"
+          },
+          "title": "To",
+          "type": "array"
+        }
+      },
+      "required": [
+        "reference",
+        "size_bytes"
+      ],
+      "title": "MailMessageSummary",
+      "type": "object"
+    },
+    "MailMutationResult": {
+      "$defs": {
+        "MailMessageRef": {
+          "additionalProperties": false,
+          "description": "Account-bound IMAP UID reference; invalid after mailbox UIDVALIDITY changes.",
+          "properties": {
+            "account_id": {
+              "pattern": "^[a-f0-9]{64}$",
+              "title": "Account Id",
+              "type": "string"
+            },
+            "folder": {
+              "maxLength": 512,
+              "minLength": 1,
+              "title": "Folder",
+              "type": "string"
+            },
+            "uid": {
+              "maximum": 4294967295,
+              "minimum": 1,
+              "title": "Uid",
+              "type": "integer"
+            },
+            "uid_validity": {
+              "maximum": 4294967295,
+              "minimum": 1,
+              "title": "Uid Validity",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "account_id",
+            "folder",
+            "uid",
+            "uid_validity"
+          ],
+          "title": "MailMessageRef",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "enum": [
+            "read",
+            "unread",
+            "trash"
+          ],
+          "title": "Action",
+          "type": "string"
+        },
+        "destination_folder": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Destination Folder"
+        },
+        "reference": {
+          "$ref": "#/$defs/MailMessageRef"
+        }
+      },
+      "required": [
+        "reference",
+        "action"
+      ],
+      "title": "MailMutationResult",
+      "type": "object"
+    },
+    "MailOutgoingAttachment": {
+      "additionalProperties": false,
+      "description": "Base64 file attachment; decoded and aggregate sizes are checked before SMTP.",
+      "properties": {
+        "content_base64": {
+          "title": "Content Base64",
+          "type": "string"
+        },
+        "content_type": {
+          "default": "application/octet-stream",
+          "maxLength": 127,
+          "title": "Content Type",
+          "type": "string"
+        },
+        "filename": {
+          "maxLength": 255,
+          "minLength": 1,
+          "title": "Filename",
+          "type": "string"
+        }
+      },
+      "required": [
+        "filename",
+        "content_base64"
+      ],
+      "title": "MailOutgoingAttachment",
+      "type": "object"
+    },
+    "MailOutgoingMessage": {
+      "$defs": {
+        "MailOutgoingAttachment": {
+          "additionalProperties": false,
+          "description": "Base64 file attachment; decoded and aggregate sizes are checked before SMTP.",
+          "properties": {
+            "content_base64": {
+              "title": "Content Base64",
+              "type": "string"
+            },
+            "content_type": {
+              "default": "application/octet-stream",
+              "maxLength": 127,
+              "title": "Content Type",
+              "type": "string"
+            },
+            "filename": {
+              "maxLength": 255,
+              "minLength": 1,
+              "title": "Filename",
+              "type": "string"
+            }
+          },
+          "required": [
+            "filename",
+            "content_base64"
+          ],
+          "title": "MailOutgoingAttachment",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Outgoing message. From is always the current authenticated Yandex account.",
+      "properties": {
+        "attachments": {
+          "items": {
+            "$ref": "#/$defs/MailOutgoingAttachment"
+          },
+          "maxItems": 20,
+          "title": "Attachments",
+          "type": "array"
+        },
+        "bcc": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 100,
+          "title": "Bcc",
+          "type": "array"
+        },
+        "cc": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 100,
+          "title": "Cc",
+          "type": "array"
+        },
+        "html": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Html"
+        },
+        "subject": {
+          "default": "",
+          "maxLength": 1000,
+          "title": "Subject",
+          "type": "string"
+        },
+        "text": {
+          "default": "",
+          "title": "Text",
+          "type": "string"
+        },
+        "to": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 100,
+          "minItems": 1,
+          "title": "To",
+          "type": "array"
+        }
+      },
+      "required": [
+        "to"
+      ],
+      "title": "MailOutgoingMessage",
+      "type": "object"
+    },
+    "MailSendResult": {
+      "additionalProperties": false,
+      "description": "SMTP acceptance is not delivery confirmation; no Sent-folder copy is appended.",
+      "properties": {
+        "accepted_recipients": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Accepted Recipients",
+          "type": "array"
+        },
+        "delivery_confirmed": {
+          "default": false,
+          "title": "Delivery Confirmed",
+          "type": "boolean"
+        },
+        "message_id": {
+          "title": "Message Id",
+          "type": "string"
+        },
+        "rejected_recipients": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Rejected Recipients",
+          "type": "array"
+        },
+        "sent_copy_saved": {
+          "default": false,
+          "title": "Sent Copy Saved",
+          "type": "boolean"
+        },
+        "status": {
+          "enum": [
+            "accepted",
+            "partially_accepted"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "message_id",
+        "accepted_recipients"
+      ],
+      "title": "MailSendResult",
+      "type": "object"
+    }
+  },
+  "tools": {
+    "mail_attachment": {
+      "annotations": {
+        "destructive_hint": false,
+        "idempotent_hint": true,
+        "open_world_hint": false,
+        "read_only_hint": true
+      },
+      "description": "Read one bounded attachment as base64",
+      "input_schema": {
+        "$defs": {
+          "MailMessageRef": {
+            "additionalProperties": false,
+            "description": "Account-bound IMAP UID reference; invalid after mailbox UIDVALIDITY changes.",
+            "properties": {
+              "account_id": {
+                "pattern": "^[a-f0-9]{64}$",
+                "title": "Account Id",
+                "type": "string"
+              },
+              "folder": {
+                "maxLength": 512,
+                "minLength": 1,
+                "title": "Folder",
+                "type": "string"
+              },
+              "uid": {
+                "maximum": 4294967295,
+                "minimum": 1,
+                "title": "Uid",
+                "type": "integer"
+              },
+              "uid_validity": {
+                "maximum": 4294967295,
+                "minimum": 1,
+                "title": "Uid Validity",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "account_id",
+              "folder",
+              "uid",
+              "uid_validity"
+            ],
+            "title": "MailMessageRef",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "attachment_id": {
+            "title": "Attachment Id",
+            "type": "string"
+          },
+          "reference": {
+            "$ref": "#/$defs/MailMessageRef"
+          }
+        },
+        "required": [
+          "reference",
+          "attachment_id"
+        ],
+        "title": "mail_attachmentArguments",
+        "type": "object"
+      },
+      "meta": {
+        "required_scopes": [
+          "mail:read"
+        ]
+      },
+      "name": "mail_attachment",
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "attachment_id": {
+            "title": "Attachment Id",
+            "type": "string"
+          },
+          "content_base64": {
+            "title": "Content Base64",
+            "type": "string"
+          },
+          "content_type": {
+            "title": "Content Type",
+            "type": "string"
+          },
+          "filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Filename"
+          },
+          "size_bytes": {
+            "minimum": 0,
+            "title": "Size Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "attachment_id",
+          "content_type",
+          "size_bytes",
+          "content_base64"
+        ],
+        "title": "MailAttachmentContent",
+        "type": "object"
+      }
+    },
+    "mail_folders": {
+      "annotations": {
+        "destructive_hint": false,
+        "idempotent_hint": true,
+        "open_world_hint": false,
+        "read_only_hint": true
+      },
+      "description": "List current-account Yandex Mail folders",
+      "input_schema": {
+        "properties": {},
+        "title": "mail_foldersArguments",
+        "type": "object"
+      },
+      "meta": {
+        "required_scopes": [
+          "mail:read"
+        ]
+      },
+      "name": "mail_folders",
+      "output_schema": {
+        "$defs": {
+          "MailFolder": {
+            "additionalProperties": false,
+            "description": "Selectable folder name and server-advertised special-use flags.",
+            "properties": {
+              "delimiter": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Delimiter"
+              },
+              "flags": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Flags",
+                "type": "array"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "selectable": {
+                "default": true,
+                "title": "Selectable",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "title": "MailFolder",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "folders": {
+            "items": {
+              "$ref": "#/$defs/MailFolder"
+            },
+            "title": "Folders",
+            "type": "array"
+          }
+        },
+        "required": [
+          "folders"
+        ],
+        "title": "MailFolderList",
+        "type": "object"
+      }
+    },
+    "mail_forward": {
+      "annotations": {
+        "destructive_hint": false,
+        "idempotent_hint": false,
+        "open_world_hint": true,
+        "read_only_hint": false
+      },
+      "description": "Forward bounded original content and attachments once",
+      "input_schema": {
+        "$defs": {
+          "MailMessageRef": {
+            "additionalProperties": false,
+            "description": "Account-bound IMAP UID reference; invalid after mailbox UIDVALIDITY changes.",
+            "properties": {
+              "account_id": {
+                "pattern": "^[a-f0-9]{64}$",
+                "title": "Account Id",
+                "type": "string"
+              },
+              "folder": {
+                "maxLength": 512,
+                "minLength": 1,
+                "title": "Folder",
+                "type": "string"
+              },
+              "uid": {
+                "maximum": 4294967295,
+                "minimum": 1,
+                "title": "Uid",
+                "type": "integer"
+              },
+              "uid_validity": {
+                "maximum": 4294967295,
+                "minimum": 1,
+                "title": "Uid Validity",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "account_id",
+              "folder",
+              "uid",
+              "uid_validity"
+            ],
+            "title": "MailMessageRef",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "bcc": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bcc"
+          },
+          "cc": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Cc"
+          },
+          "reference": {
+            "$ref": "#/$defs/MailMessageRef"
+          },
+          "text": {
+            "default": "",
+            "title": "Text",
+            "type": "string"
+          },
+          "to": {
+            "items": {
+              "type": "string"
+            },
+            "title": "To",
+            "type": "array"
+          }
+        },
+        "required": [
+          "reference",
+          "to"
+        ],
+        "title": "mail_forwardArguments",
+        "type": "object"
+      },
+      "meta": {
+        "required_scopes": [
+          "mail:write"
+        ]
+      },
+      "name": "mail_forward",
+      "output_schema": {
+        "additionalProperties": false,
+        "description": "SMTP acceptance is not delivery confirmation; no Sent-folder copy is appended.",
+        "properties": {
+          "accepted_recipients": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Accepted Recipients",
+            "type": "array"
+          },
+          "delivery_confirmed": {
+            "default": false,
+            "title": "Delivery Confirmed",
+            "type": "boolean"
+          },
+          "message_id": {
+            "title": "Message Id",
+            "type": "string"
+          },
+          "rejected_recipients": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Rejected Recipients",
+            "type": "array"
+          },
+          "sent_copy_saved": {
+            "default": false,
+            "title": "Sent Copy Saved",
+            "type": "boolean"
+          },
+          "status": {
+            "enum": [
+              "accepted",
+              "partially_accepted"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "message_id",
+          "accepted_recipients"
+        ],
+        "title": "MailSendResult",
+        "type": "object"
+      }
+    },
+    "mail_list": {
+      "annotations": {
+        "destructive_hint": false,
+        "idempotent_hint": true,
+        "open_world_hint": false,
+        "read_only_hint": true
+      },
+      "description": "List newest messages in a bounded 1,000-UID window; continue using next_before_uid",
+      "input_schema": {
+        "properties": {
+          "before_uid": {
+            "anyOf": [
+              {
+                "maximum": 4294967295,
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Before Uid"
+          },
+          "folder": {
+            "default": "INBOX",
+            "title": "Folder",
+            "type": "string"
+          },
+          "limit": {
+            "default": 20,
+            "maximum": 100,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          }
+        },
+        "title": "mail_listArguments",
+        "type": "object"
+      },
+      "meta": {
+        "required_scopes": [
+          "mail:read"
+        ]
+      },
+      "name": "mail_list",
+      "output_schema": {
+        "$defs": {
+          "MailMessageRef": {
+            "additionalProperties": false,
+            "description": "Account-bound IMAP UID reference; invalid after mailbox UIDVALIDITY changes.",
+            "properties": {
+              "account_id": {
+                "pattern": "^[a-f0-9]{64}$",
+                "title": "Account Id",
+                "type": "string"
+              },
+              "folder": {
+                "maxLength": 512,
+                "minLength": 1,
+                "title": "Folder",
+                "type": "string"
+              },
+              "uid": {
+                "maximum": 4294967295,
+                "minimum": 1,
+                "title": "Uid",
+                "type": "integer"
+              },
+              "uid_validity": {
+                "maximum": 4294967295,
+                "minimum": 1,
+                "title": "Uid Validity",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "account_id",
+              "folder",
+              "uid",
+              "uid_validity"
+            ],
+            "title": "MailMessageRef",
+            "type": "object"
+          },
+          "MailMessageSummary": {
+            "additionalProperties": false,
+            "properties": {
+              "date": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Date"
+              },
+              "is_read": {
+                "default": false,
+                "title": "Is Read",
+                "type": "boolean"
+              },
+              "message_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Message Id"
+              },
+              "reference": {
+                "$ref": "#/$defs/MailMessageRef"
+              },
+              "sender": {
+                "default": "",
+                "title": "Sender",
+                "type": "string"
+              },
+              "size_bytes": {
+                "minimum": 0,
+                "title": "Size Bytes",
+                "type": "integer"
+              },
+              "subject": {
+                "default": "",
+                "title": "Subject",
+                "type": "string"
+              },
+              "to": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "To",
+                "type": "array"
+              }
+            },
+            "required": [
+              "reference",
+              "size_bytes"
+            ],
+            "title": "MailMessageSummary",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Newest-first results from at most 1,000 UID values per request.",
+        "properties": {
+          "messages": {
+            "items": {
+              "$ref": "#/$defs/MailMessageSummary"
+            },
+            "title": "Messages",
+            "type": "array"
+          },
+          "next_before_uid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Next Before Uid"
+          },
+          "partial_scan": {
+            "default": false,
+            "title": "Partial Scan",
+            "type": "boolean"
+          },
+          "scan_end_uid": {
+            "minimum": 0,
+            "title": "Scan End Uid",
+            "type": "integer"
+          },
+          "scan_start_uid": {
+            "minimum": 0,
+            "title": "Scan Start Uid",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "messages",
+          "scan_start_uid",
+          "scan_end_uid"
+        ],
+        "title": "MailMessagePage",
+        "type": "object"
+      }
+    },
+    "mail_read": {
+      "annotations": {
+        "destructive_hint": false,
+        "idempotent_hint": true,
+        "open_world_hint": false,
+        "read_only_hint": true
+      },
+      "description": "Read bounded MIME without marking the message read",
+      "input_schema": {
+        "$defs": {
+          "MailMessageRef": {
+            "additionalProperties": false,
+            "description": "Account-bound IMAP UID reference; invalid after mailbox UIDVALIDITY changes.",
+            "properties": {
+              "account_id": {
+                "pattern": "^[a-f0-9]{64}$",
+                "title": "Account Id",
+                "type": "string"
+              },
+              "folder": {
+                "maxLength": 512,
+                "minLength": 1,
+                "title": "Folder",
+                "type": "string"
+              },
+              "uid": {
+                "maximum": 4294967295,
+                "minimum": 1,
+                "title": "Uid",
+                "type": "integer"
+              },
+              "uid_validity": {
+                "maximum": 4294967295,
+                "minimum": 1,
+                "title": "Uid Validity",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "account_id",
+              "folder",
+              "uid",
+              "uid_validity"
+            ],
+            "title": "MailMessageRef",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "reference": {
+            "$ref": "#/$defs/MailMessageRef"
+          }
+        },
+        "required": [
+          "reference"
+        ],
+        "title": "mail_readArguments",
+        "type": "object"
+      },
+      "meta": {
+        "required_scopes": [
+          "mail:read"
+        ]
+      },
+      "name": "mail_read",
+      "output_schema": {
+        "$defs": {
+          "MailAttachment": {
+            "additionalProperties": false,
+            "description": "Opaque part ID scoped to the message reference, without binary content.",
+            "properties": {
+              "attachment_id": {
+                "title": "Attachment Id",
+                "type": "string"
+              },
+              "content_type": {
+                "title": "Content Type",
+                "type": "string"
+              },
+              "filename": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Filename"
+              },
+              "size_bytes": {
+                "minimum": 0,
+                "title": "Size Bytes",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "attachment_id",
+              "content_type",
+              "size_bytes"
+            ],
+            "title": "MailAttachment",
+            "type": "object"
+          },
+          "MailMessageRef": {
+            "additionalProperties": false,
+            "description": "Account-bound IMAP UID reference; invalid after mailbox UIDVALIDITY changes.",
+            "properties": {
+              "account_id": {
+                "pattern": "^[a-f0-9]{64}$",
+                "title": "Account Id",
+                "type": "string"
+              },
+              "folder": {
+                "maxLength": 512,
+                "minLength": 1,
+                "title": "Folder",
+                "type": "string"
+              },
+              "uid": {
+                "maximum": 4294967295,
+                "minimum": 1,
+                "title": "Uid",
+                "type": "integer"
+              },
+              "uid_validity": {
+                "maximum": 4294967295,
+                "minimum": 1,
+                "title": "Uid Validity",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "account_id",
+              "folder",
+              "uid",
+              "uid_validity"
+            ],
+            "title": "MailMessageRef",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "attachments": {
+            "items": {
+              "$ref": "#/$defs/MailAttachment"
+            },
+            "title": "Attachments",
+            "type": "array"
+          },
+          "cc": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Cc",
+            "type": "array"
+          },
+          "date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Date"
+          },
+          "html": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Html"
+          },
+          "is_read": {
+            "default": false,
+            "title": "Is Read",
+            "type": "boolean"
+          },
+          "message_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Message Id"
+          },
+          "reference": {
+            "$ref": "#/$defs/MailMessageRef"
+          },
+          "reply_to": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reply To",
+            "type": "array"
+          },
+          "sender": {
+            "default": "",
+            "title": "Sender",
+            "type": "string"
+          },
+          "size_bytes": {
+            "minimum": 0,
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "subject": {
+            "default": "",
+            "title": "Subject",
+            "type": "string"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Text"
+          },
+          "to": {
+            "items": {
+              "type": "string"
+            },
+            "title": "To",
+            "type": "array"
+          }
+        },
+        "required": [
+          "reference",
+          "size_bytes"
+        ],
+        "title": "MailMessage",
+        "type": "object"
+      }
+    },
+    "mail_reply": {
+      "annotations": {
+        "destructive_hint": false,
+        "idempotent_hint": false,
+        "open_world_hint": true,
+        "read_only_hint": false
+      },
+      "description": "Reply once using the original Reply-To or From",
+      "input_schema": {
+        "$defs": {
+          "MailMessageRef": {
+            "additionalProperties": false,
+            "description": "Account-bound IMAP UID reference; invalid after mailbox UIDVALIDITY changes.",
+            "properties": {
+              "account_id": {
+                "pattern": "^[a-f0-9]{64}$",
+                "title": "Account Id",
+                "type": "string"
+              },
+              "folder": {
+                "maxLength": 512,
+                "minLength": 1,
+                "title": "Folder",
+                "type": "string"
+              },
+              "uid": {
+                "maximum": 4294967295,
+                "minimum": 1,
+                "title": "Uid",
+                "type": "integer"
+              },
+              "uid_validity": {
+                "maximum": 4294967295,
+                "minimum": 1,
+                "title": "Uid Validity",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "account_id",
+              "folder",
+              "uid",
+              "uid_validity"
+            ],
+            "title": "MailMessageRef",
+            "type": "object"
+          },
+          "MailOutgoingAttachment": {
+            "additionalProperties": false,
+            "description": "Base64 file attachment; decoded and aggregate sizes are checked before SMTP.",
+            "properties": {
+              "content_base64": {
+                "title": "Content Base64",
+                "type": "string"
+              },
+              "content_type": {
+                "default": "application/octet-stream",
+                "maxLength": 127,
+                "title": "Content Type",
+                "type": "string"
+              },
+              "filename": {
+                "maxLength": 255,
+                "minLength": 1,
+                "title": "Filename",
+                "type": "string"
+              }
+            },
+            "required": [
+              "filename",
+              "content_base64"
+            ],
+            "title": "MailOutgoingAttachment",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "attachments": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/MailOutgoingAttachment"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Attachments"
+          },
+          "reference": {
+            "$ref": "#/$defs/MailMessageRef"
+          },
+          "reply_all": {
+            "default": false,
+            "title": "Reply All",
+            "type": "boolean"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reference",
+          "text"
+        ],
+        "title": "mail_replyArguments",
+        "type": "object"
+      },
+      "meta": {
+        "required_scopes": [
+          "mail:write"
+        ]
+      },
+      "name": "mail_reply",
+      "output_schema": {
+        "additionalProperties": false,
+        "description": "SMTP acceptance is not delivery confirmation; no Sent-folder copy is appended.",
+        "properties": {
+          "accepted_recipients": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Accepted Recipients",
+            "type": "array"
+          },
+          "delivery_confirmed": {
+            "default": false,
+            "title": "Delivery Confirmed",
+            "type": "boolean"
+          },
+          "message_id": {
+            "title": "Message Id",
+            "type": "string"
+          },
+          "rejected_recipients": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Rejected Recipients",
+            "type": "array"
+          },
+          "sent_copy_saved": {
+            "default": false,
+            "title": "Sent Copy Saved",
+            "type": "boolean"
+          },
+          "status": {
+            "enum": [
+              "accepted",
+              "partially_accepted"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "message_id",
+          "accepted_recipients"
+        ],
+        "title": "MailSendResult",
+        "type": "object"
+      }
+    },
+    "mail_search": {
+      "annotations": {
+        "destructive_hint": false,
+        "idempotent_hint": true,
+        "open_world_hint": false,
+        "read_only_hint": true
+      },
+      "description": "Search message text in a bounded 1,000-UID window; continue using next_before_uid",
+      "input_schema": {
+        "properties": {
+          "before_uid": {
+            "anyOf": [
+              {
+                "maximum": 4294967295,
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Before Uid"
+          },
+          "folder": {
+            "default": "INBOX",
+            "title": "Folder",
+            "type": "string"
+          },
+          "limit": {
+            "default": 20,
+            "maximum": 100,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "query": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Query",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "title": "mail_searchArguments",
+        "type": "object"
+      },
+      "meta": {
+        "required_scopes": [
+          "mail:read"
+        ]
+      },
+      "name": "mail_search",
+      "output_schema": {
+        "$defs": {
+          "MailMessageRef": {
+            "additionalProperties": false,
+            "description": "Account-bound IMAP UID reference; invalid after mailbox UIDVALIDITY changes.",
+            "properties": {
+              "account_id": {
+                "pattern": "^[a-f0-9]{64}$",
+                "title": "Account Id",
+                "type": "string"
+              },
+              "folder": {
+                "maxLength": 512,
+                "minLength": 1,
+                "title": "Folder",
+                "type": "string"
+              },
+              "uid": {
+                "maximum": 4294967295,
+                "minimum": 1,
+                "title": "Uid",
+                "type": "integer"
+              },
+              "uid_validity": {
+                "maximum": 4294967295,
+                "minimum": 1,
+                "title": "Uid Validity",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "account_id",
+              "folder",
+              "uid",
+              "uid_validity"
+            ],
+            "title": "MailMessageRef",
+            "type": "object"
+          },
+          "MailMessageSummary": {
+            "additionalProperties": false,
+            "properties": {
+              "date": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Date"
+              },
+              "is_read": {
+                "default": false,
+                "title": "Is Read",
+                "type": "boolean"
+              },
+              "message_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Message Id"
+              },
+              "reference": {
+                "$ref": "#/$defs/MailMessageRef"
+              },
+              "sender": {
+                "default": "",
+                "title": "Sender",
+                "type": "string"
+              },
+              "size_bytes": {
+                "minimum": 0,
+                "title": "Size Bytes",
+                "type": "integer"
+              },
+              "subject": {
+                "default": "",
+                "title": "Subject",
+                "type": "string"
+              },
+              "to": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "To",
+                "type": "array"
+              }
+            },
+            "required": [
+              "reference",
+              "size_bytes"
+            ],
+            "title": "MailMessageSummary",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Newest-first results from at most 1,000 UID values per request.",
+        "properties": {
+          "messages": {
+            "items": {
+              "$ref": "#/$defs/MailMessageSummary"
+            },
+            "title": "Messages",
+            "type": "array"
+          },
+          "next_before_uid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Next Before Uid"
+          },
+          "partial_scan": {
+            "default": false,
+            "title": "Partial Scan",
+            "type": "boolean"
+          },
+          "scan_end_uid": {
+            "minimum": 0,
+            "title": "Scan End Uid",
+            "type": "integer"
+          },
+          "scan_start_uid": {
+            "minimum": 0,
+            "title": "Scan Start Uid",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "messages",
+          "scan_start_uid",
+          "scan_end_uid"
+        ],
+        "title": "MailMessagePage",
+        "type": "object"
+      }
+    },
+    "mail_send": {
+      "annotations": {
+        "destructive_hint": false,
+        "idempotent_hint": false,
+        "open_world_hint": true,
+        "read_only_hint": false
+      },
+      "description": "Submit mail once; SMTP acceptance does not confirm delivery or a Sent-folder copy",
+      "input_schema": {
+        "$defs": {
+          "MailOutgoingAttachment": {
+            "additionalProperties": false,
+            "description": "Base64 file attachment; decoded and aggregate sizes are checked before SMTP.",
+            "properties": {
+              "content_base64": {
+                "title": "Content Base64",
+                "type": "string"
+              },
+              "content_type": {
+                "default": "application/octet-stream",
+                "maxLength": 127,
+                "title": "Content Type",
+                "type": "string"
+              },
+              "filename": {
+                "maxLength": 255,
+                "minLength": 1,
+                "title": "Filename",
+                "type": "string"
+              }
+            },
+            "required": [
+              "filename",
+              "content_base64"
+            ],
+            "title": "MailOutgoingAttachment",
+            "type": "object"
+          },
+          "MailOutgoingMessage": {
+            "additionalProperties": false,
+            "description": "Outgoing message. From is always the current authenticated Yandex account.",
+            "properties": {
+              "attachments": {
+                "items": {
+                  "$ref": "#/$defs/MailOutgoingAttachment"
+                },
+                "maxItems": 20,
+                "title": "Attachments",
+                "type": "array"
+              },
+              "bcc": {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "title": "Bcc",
+                "type": "array"
+              },
+              "cc": {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "title": "Cc",
+                "type": "array"
+              },
+              "html": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Html"
+              },
+              "subject": {
+                "default": "",
+                "maxLength": 1000,
+                "title": "Subject",
+                "type": "string"
+              },
+              "text": {
+                "default": "",
+                "title": "Text",
+                "type": "string"
+              },
+              "to": {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "minItems": 1,
+                "title": "To",
+                "type": "array"
+              }
+            },
+            "required": [
+              "to"
+            ],
+            "title": "MailOutgoingMessage",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "message": {
+            "$ref": "#/$defs/MailOutgoingMessage"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "title": "mail_sendArguments",
+        "type": "object"
+      },
+      "meta": {
+        "required_scopes": [
+          "mail:write"
+        ]
+      },
+      "name": "mail_send",
+      "output_schema": {
+        "additionalProperties": false,
+        "description": "SMTP acceptance is not delivery confirmation; no Sent-folder copy is appended.",
+        "properties": {
+          "accepted_recipients": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Accepted Recipients",
+            "type": "array"
+          },
+          "delivery_confirmed": {
+            "default": false,
+            "title": "Delivery Confirmed",
+            "type": "boolean"
+          },
+          "message_id": {
+            "title": "Message Id",
+            "type": "string"
+          },
+          "rejected_recipients": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Rejected Recipients",
+            "type": "array"
+          },
+          "sent_copy_saved": {
+            "default": false,
+            "title": "Sent Copy Saved",
+            "type": "boolean"
+          },
+          "status": {
+            "enum": [
+              "accepted",
+              "partially_accepted"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "message_id",
+          "accepted_recipients"
+        ],
+        "title": "MailSendResult",
+        "type": "object"
+      }
+    },
+    "mail_set_read": {
+      "annotations": {
+        "destructive_hint": false,
+        "idempotent_hint": true,
+        "open_world_hint": false,
+        "read_only_hint": false
+      },
+      "description": "Set one message read or unread",
+      "input_schema": {
+        "$defs": {
+          "MailMessageRef": {
+            "additionalProperties": false,
+            "description": "Account-bound IMAP UID reference; invalid after mailbox UIDVALIDITY changes.",
+            "properties": {
+              "account_id": {
+                "pattern": "^[a-f0-9]{64}$",
+                "title": "Account Id",
+                "type": "string"
+              },
+              "folder": {
+                "maxLength": 512,
+                "minLength": 1,
+                "title": "Folder",
+                "type": "string"
+              },
+              "uid": {
+                "maximum": 4294967295,
+                "minimum": 1,
+                "title": "Uid",
+                "type": "integer"
+              },
+              "uid_validity": {
+                "maximum": 4294967295,
+                "minimum": 1,
+                "title": "Uid Validity",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "account_id",
+              "folder",
+              "uid",
+              "uid_validity"
+            ],
+            "title": "MailMessageRef",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "is_read": {
+            "title": "Is Read",
+            "type": "boolean"
+          },
+          "reference": {
+            "$ref": "#/$defs/MailMessageRef"
+          }
+        },
+        "required": [
+          "reference",
+          "is_read"
+        ],
+        "title": "mail_set_readArguments",
+        "type": "object"
+      },
+      "meta": {
+        "required_scopes": [
+          "mail:write"
+        ]
+      },
+      "name": "mail_set_read",
+      "output_schema": {
+        "$defs": {
+          "MailMessageRef": {
+            "additionalProperties": false,
+            "description": "Account-bound IMAP UID reference; invalid after mailbox UIDVALIDITY changes.",
+            "properties": {
+              "account_id": {
+                "pattern": "^[a-f0-9]{64}$",
+                "title": "Account Id",
+                "type": "string"
+              },
+              "folder": {
+                "maxLength": 512,
+                "minLength": 1,
+                "title": "Folder",
+                "type": "string"
+              },
+              "uid": {
+                "maximum": 4294967295,
+                "minimum": 1,
+                "title": "Uid",
+                "type": "integer"
+              },
+              "uid_validity": {
+                "maximum": 4294967295,
+                "minimum": 1,
+                "title": "Uid Validity",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "account_id",
+              "folder",
+              "uid",
+              "uid_validity"
+            ],
+            "title": "MailMessageRef",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "enum": [
+              "read",
+              "unread",
+              "trash"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "destination_folder": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Destination Folder"
+          },
+          "reference": {
+            "$ref": "#/$defs/MailMessageRef"
+          }
+        },
+        "required": [
+          "reference",
+          "action"
+        ],
+        "title": "MailMutationResult",
+        "type": "object"
+      }
+    },
+    "mail_trash": {
+      "annotations": {
+        "destructive_hint": true,
+        "idempotent_hint": false,
+        "open_world_hint": false,
+        "read_only_hint": false
+      },
+      "description": "Move one message to Trash using safe UID MOVE only",
+      "input_schema": {
+        "$defs": {
+          "MailMessageRef": {
+            "additionalProperties": false,
+            "description": "Account-bound IMAP UID reference; invalid after mailbox UIDVALIDITY changes.",
+            "properties": {
+              "account_id": {
+                "pattern": "^[a-f0-9]{64}$",
+                "title": "Account Id",
+                "type": "string"
+              },
+              "folder": {
+                "maxLength": 512,
+                "minLength": 1,
+                "title": "Folder",
+                "type": "string"
+              },
+              "uid": {
+                "maximum": 4294967295,
+                "minimum": 1,
+                "title": "Uid",
+                "type": "integer"
+              },
+              "uid_validity": {
+                "maximum": 4294967295,
+                "minimum": 1,
+                "title": "Uid Validity",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "account_id",
+              "folder",
+              "uid",
+              "uid_validity"
+            ],
+            "title": "MailMessageRef",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "reference": {
+            "$ref": "#/$defs/MailMessageRef"
+          }
+        },
+        "required": [
+          "reference"
+        ],
+        "title": "mail_trashArguments",
+        "type": "object"
+      },
+      "meta": {
+        "required_scopes": [
+          "mail:delete"
+        ]
+      },
+      "name": "mail_trash",
+      "output_schema": {
+        "$defs": {
+          "MailMessageRef": {
+            "additionalProperties": false,
+            "description": "Account-bound IMAP UID reference; invalid after mailbox UIDVALIDITY changes.",
+            "properties": {
+              "account_id": {
+                "pattern": "^[a-f0-9]{64}$",
+                "title": "Account Id",
+                "type": "string"
+              },
+              "folder": {
+                "maxLength": 512,
+                "minLength": 1,
+                "title": "Folder",
+                "type": "string"
+              },
+              "uid": {
+                "maximum": 4294967295,
+                "minimum": 1,
+                "title": "Uid",
+                "type": "integer"
+              },
+              "uid_validity": {
+                "maximum": 4294967295,
+                "minimum": 1,
+                "title": "Uid Validity",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "account_id",
+              "folder",
+              "uid",
+              "uid_validity"
+            ],
+            "title": "MailMessageRef",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "enum": [
+              "read",
+              "unread",
+              "trash"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "destination_folder": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Destination Folder"
+          },
+          "reference": {
+            "$ref": "#/$defs/MailMessageRef"
+          }
+        },
+        "required": [
+          "reference",
+          "action"
+        ],
+        "title": "MailMutationResult",
+        "type": "object"
+      }
+    }
+  }
+}

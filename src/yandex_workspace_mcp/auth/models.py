@@ -9,6 +9,9 @@ class WorkspaceScope(StrEnum):
     READ = "workspace:read"
     WRITE = "workspace:write"
     DELETE = "workspace:delete"
+    MAIL_READ = "mail:read"
+    MAIL_WRITE = "mail:write"
+    MAIL_DELETE = "mail:delete"
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,6 +32,7 @@ class YandexOAuthCredential:
     token: str = field(repr=False)
     organization_id: str | None = None
     cloud_organization: bool = False
+    email: str | None = field(default=None, repr=False)
 
     def request_credentials(self):
         from .credentials import oauth_request_credentials
@@ -126,6 +130,7 @@ class DownstreamCredentialRecord(AuthRecord):
     organization_id: str | None = None
     cloud_organization: bool = False
     yandex_subject: str | None = None
+    email: str | None = None
 
 
 class RecoveryHandleRecord(AuthRecord):

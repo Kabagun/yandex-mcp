@@ -27,7 +27,7 @@ from ..models.disk import (
     map_disk_trash_entry,
     map_disk_trash_page,
 )
-from ..models.errors import APIError, ContractMismatchError, InvalidInput
+from ..models.errors import APIError, ContractMismatchError, InvalidInput, PermissionDenied
 from ..policies.local_files import AllowedLocalFile
 from ..policies.urls import poll_operation, validate_disk_operation_url
 from .base import BaseYandexClient, RequestCredentials, RequestSemantics
@@ -512,13 +512,8 @@ class YandexDiskClient(BaseYandexClient):
         *,
         credentials: RequestCredentials | None = None,
     ) -> DiskOperationResponse:
-        response = await self._request(
-            "DELETE",
-            "/trash/resources",
-            semantics=RequestSemantics.MUTATION,
-            credentials=credentials,
-        )
-        return await self._map_mutation_response(response, credentials=credentials)
+        """Reject legacy purge calls before making any upstream request."""
+        raise PermissionDenied()
 
     async def get_download_url(self, path: str) -> str:
         link = await self.get_download_link(path)

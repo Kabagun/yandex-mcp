@@ -26,3 +26,13 @@ Wire models tolerate additive upstream fields. Stable public MCP models explicit
 - **Disk global/pathless controls**: Direct paths, both copy/move endpoints, effective Trash restore destinations, recent/search results, and embedded pages pass through service authorization. Public keys/URLs and remote-fetch hosts use independent exact allowlists and never expand Disk roots.
 - **Disk operations**: Mutation calls and signed PUTs are one-attempt. A `202` status link is accepted only on the exact Disk API origin, polled with a 0.5-second minimum interval, 30-second deadline, and 100-poll cap, then discarded from public output.
 - **Production HTTP**: The MCP SDK authorization-server provider owns dynamic registration, authorization-code/PKCE exchange, refresh rotation, and revocation. Streamable HTTP is stateless, body-bounded, Host/Origin allowlisted, and exposes a credential-free minimal `/healthz`; forwarded scheme/host values are honored only from configured proxy CIDRs.
+
+## Native Mail boundary
+
+The `mail` profile registers only Mail tools and passes request-local credentials
+into a fresh TLS IMAP/SMTP session. `clients/mail.py` handles XOAUTH2 and MIME;
+`services/mail.py` enforces configured permissions and audits mutations;
+`tools/mail.py` validates the public MCP contract and requires `mail:*` rights.
+Blocking socket operations run in worker threads. Redis prefixes include service
+profile and issuer; account-specific UID references additionally bind to folder
+UIDVALIDITY. See [profiles](profiles.md) for capabilities and limits.

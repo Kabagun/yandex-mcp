@@ -29,3 +29,13 @@ Back up Redis consistently with the active encryption-key ring. Rotate by prepen
 - A passing health check does not verify Yandex credentials or live API compatibility.
 - Live contract tests require dedicated scratch roots and explicit secrets. They are not part of ordinary pull-request CI.
 - Do not import the module singleton in tests or embedding code. Build isolated instances with `create_application(settings, dependencies)` and enter their lifespan.
+
+## Two service processes from one checkout
+
+For the hosted Disk and Mail deployment use [the profile runbook](profiles.md)
+and the two `.env.disk.example` / `.env.mail.example` templates. Use separate
+systemd units and protected environment files; one Git checkout and dependency
+environment can serve both. Register callbacks with distinct Yandex OAuth
+applications before activating Mail. Publish each domain only after the matching
+process passes health and OAuth discovery checks. Legacy Disk token namespaces
+must be migrated with retained keys and TTLs as described in the runbook.

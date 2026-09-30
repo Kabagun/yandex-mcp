@@ -100,6 +100,9 @@ _PUBLIC_MESSAGES = {
     "upstream_timeout": "Yandex API timed out.",
     "contract_mismatch": "Yandex API response did not match the expected contract.",
     "upstream_error": "Yandex API returned an error.",
+    "mail_submission_uncertain": (
+        "Mail submission outcome is unknown. Check the account before sending again."
+    ),
 }
 
 _SENSITIVE_KEYS = {

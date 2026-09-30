@@ -20,6 +20,8 @@ def main():
     if args.command == "doctor":
         print("MCP specification ......... 2026-07-28")
         print("MCP SDK ................... v2.x")
+        print(f"MCP profile ............... {settings.mcp_profile}")
+        print(f"Mail enabled .............. {settings.yandex_mail_enabled}")
         print(f"Disk enabled .............. {settings.yandex_disk_enabled}")
         print(f"Wiki enabled .............. {settings.yandex_wiki_enabled}")
         print(f"Disk read ................. {'ENABLED' if settings.disk_read else 'DISABLED'}")

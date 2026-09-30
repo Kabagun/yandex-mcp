@@ -704,11 +704,5 @@ class DiskService:
         confirm: bool,
         credentials: RequestCredentials | None = None,
     ) -> DiskOperationResponse:
-        if (
-            not self.can_delete
-            or "/" not in self.allowed_roots
-            or not self.allow_global_destructive
-            or confirm is not True
-        ):
-            raise InvalidPath()
-        return await self.client.empty_trash(credentials=credentials)
+        """Reject account-wide purges unconditionally, including legacy callers."""
+        raise InvalidPath()

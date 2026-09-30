@@ -1,14 +1,14 @@
-# Yandex Workspace MCP
+# Yandex MCP: Disk and Mail
 
-<!-- mcp-name: io.github.denis-samatov/yandex-workspace-mcp -->
+Fork of [Yandex Workspace MCP](https://github.com/denis-samatov/yandex-workspace-mcp) by Denis Samatov, under the original MIT license.
 
-[![CI](https://github.com/denis-samatov/yandex-workspace-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/denis-samatov/yandex-workspace-mcp/actions/workflows/ci.yml)
+[![CI](https://github.com/Kabagun/yandex-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Kabagun/yandex-mcp/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 ![Python](https://img.shields.io/badge/python-3.12%2B-blue.svg)
 
-A Model Context Protocol (MCP) server with explicit permission controls for integrating AI agents with **Yandex Disk** and **Yandex Wiki**.
+One Python codebase serving two isolated multi-user MCP connections: **Yandex Disk** and **Yandex Mail**. Each connection has its own OAuth application, issuer, keys and token namespace. The upstream Workspace/Wiki mode remains available for compatibility; Wiki is disabled in both dedicated profiles.
 
-This server provides a unified interface for AI assistants to search, read, and intelligently update data in Yandex Disk and Yandex Wiki, without resorting to scraping or undocumented APIs.
+Start with the [Disk and Mail profile setup](docs/profiles.md), including the exact Yandex OAuth fields, permission gates and mail tool contract.
 
 ## Start here
 
@@ -20,7 +20,8 @@ The offline example uses a mocked upstream client. It demonstrates local authori
 
 ## Features
 
-- **Yandex Disk Integration**: 22 parity tools plus `disk_read` and inline `disk_upload` cover capacity, list/recent/search, metadata, signed links, uploads, mutations, public resources, Trash, and bounded local jobs.
+- **Yandex Disk Integration**: 21 parity tools plus `disk_read` and inline `disk_upload` cover capacity, list/recent/search, metadata, signed links, uploads, mutations, public resources, Trash, and bounded local jobs.
+- **Yandex Mail Integration**: native TLS IMAP/SMTP XOAUTH2 for folders, bounded search/list/read, attachments, sending, replies, forwarding, read flags and moving to Trash. No account-wide purge or automatic send retry.
 - **Yandex Wiki Integration**: 27 typed tools plus the `wiki_get_tree` compatibility alias cover search, page reads/writes, comments, resources, recovery, attachments, and dynamic tables.
 - **Unified Workspace Search**: A single `search` tool allows agents to query both Disk and Wiki simultaneously.
 - **Security-First Architecture**:
@@ -32,8 +33,8 @@ The offline example uses a mocked upstream client. It demonstrates local authori
 ## Installation
 
 ```bash
-git clone https://github.com/denis-samatov/yandex-workspace-mcp.git
-cd yandex-workspace-mcp
+git clone https://github.com/Kabagun/yandex-mcp.git
+cd yandex-mcp
 uv sync
 ```
 
@@ -84,7 +85,7 @@ DISK_MAX_UPLOAD_BYTES=104857600
 DISK_UPLOAD_URL_ALLOWED_HOSTS=downloads.example.com
 # Enables public-resource lookup only for these exact keys or normalized URLs.
 DISK_ALLOWED_PUBLIC_KEYS=public-key,https://disk.yandex.ru/d/example
-# Enables disk_empty_trash only together with DISK_DELETE=true and root `/`.
+# Legacy setting: must remain false; account-wide Trash purge is prohibited.
 DISK_ALLOW_GLOBAL_DESTRUCTIVE=false
 # Bounded in-process trusted-local job store.
 DISK_UPLOAD_JOB_CAPACITY=100
@@ -122,7 +123,7 @@ Page deletion returns a random MCP recovery handle rather than Yandex's token. H
 
 `DISK_WRITE` exposes inline upload, folder/copy/move/rename, publish/unpublish, and—when `DISK_UPLOAD_URL_ALLOWED_HOSTS` is non-empty—URL import. Local-file upload and its four local job tools require `stdio` plus `DISK_UPLOAD_ALLOWED_DIRS`; they are absent remotely. Jobs are in-memory, bounded, expire, never return source paths or credentials, and are cancelled during shutdown.
 
-`DISK_DELETE` exposes resource deletion and Trash restore. Permanent deletion of a configured root is refused. `disk_empty_trash` is absent unless the allowed roots include `/` and `DISK_ALLOW_GLOBAL_DESTRUCTIVE=true`; each invocation also requires literal `confirm=true`.
+`DISK_DELETE` exposes resource deletion and Trash restore. Permanent deletion of a configured root is refused. Account-wide Trash purge is prohibited: there is no `disk_empty_trash` tool, the service rejects legacy purge calls, and `DISK_ALLOW_GLOBAL_DESTRUCTIVE=true` is rejected at startup.
 
 ### Search contract and API drift
 

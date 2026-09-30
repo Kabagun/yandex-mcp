@@ -1,4 +1,4 @@
-from typing import Annotated, Literal, Protocol
+from typing import Annotated, Protocol
 from uuid import UUID
 
 from mcp.server import MCPServer
@@ -415,15 +415,3 @@ def register_disk_tools(mcp: MCPServer, application: DiskApplication, settings: 
                 destination_path=destination_path,
                 overwrite=overwrite,
             )
-
-        if settings.disk_allow_global_destructive and "/" in settings.disk_allowed_roots:
-
-            @mcp.tool(
-                name="disk_empty_trash",
-                description="Permanently empty the entire Yandex Disk Trash",
-                annotations=DESTRUCTIVE_ANNOTATIONS,
-                meta=_scope_meta(WorkspaceScope.DELETE),
-            )
-            async def disk_empty_trash(confirm: Literal[True]) -> DiskOperationResponse:
-                require_scope(application.principal, OperationClass.DELETE)
-                return await application.require_disk_service().empty_trash(confirm=confirm)

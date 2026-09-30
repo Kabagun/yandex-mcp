@@ -110,7 +110,6 @@ async def test_exact_disk_tool_sets_and_approved_total_matrix(tmp_path) -> None:
         wiki_upload_allowed_dirs=[str(tmp_path)],
         disk_upload_url_allowed_hosts=["downloads.example.test"],
         disk_allowed_public_keys=["public-key"],
-        disk_allow_global_destructive=True,
     )
     local_disk = await _disk_tools(local_all)
     assert set(local_disk) == (
@@ -118,11 +117,11 @@ async def test_exact_disk_tool_sets_and_approved_total_matrix(tmp_path) -> None:
         | DISK_WRITE_TOOLS
         | DISK_DELETE_TOOLS
         | DISK_LOCAL_JOB_TOOLS
-        | {"disk_get_public_resource", "disk_upload_from_url", "disk_empty_trash"}
+        | {"disk_get_public_resource", "disk_upload_from_url"}
     )
     from yandex_workspace_mcp.server import create_application
 
-    assert len(await create_application(local_all).mcp_server.list_tools()) == 54
+    assert len(await create_application(local_all).mcp_server.list_tools()) == 53
 
     remote_all = local_all.model_copy(
         update={
@@ -132,7 +131,7 @@ async def test_exact_disk_tool_sets_and_approved_total_matrix(tmp_path) -> None:
     )
     remote_disk = await _disk_tools(remote_all)
     assert not (set(remote_disk) & DISK_LOCAL_JOB_TOOLS)
-    assert len(await create_application(remote_all).mcp_server.list_tools()) == 49
+    assert len(await create_application(remote_all).mcp_server.list_tools()) == 48
 
 
 @pytest.mark.asyncio
@@ -147,14 +146,13 @@ async def test_disk_annotations_and_scope_metadata(tmp_path) -> None:
             disk_upload_allowed_dirs=[str(tmp_path)],
             disk_upload_url_allowed_hosts=["downloads.example.test"],
             disk_allowed_public_keys=["public-key"],
-            disk_allow_global_destructive=True,
         )
     )
     for name, tool in tools.items():
         assert tool.annotations is not None
         expected_scope = (
             "workspace:delete"
-            if name in DISK_DELETE_TOOLS or name == "disk_empty_trash"
+            if name in DISK_DELETE_TOOLS
             else "workspace:write"
             if name in DISK_WRITE_TOOLS
             or name in DISK_LOCAL_JOB_TOOLS
@@ -162,7 +160,7 @@ async def test_disk_annotations_and_scope_metadata(tmp_path) -> None:
             else "workspace:read"
         )
         assert tool.meta == {"required_scopes": [expected_scope]}
-        assert tool.annotations.destructive_hint is (name in {"disk_delete", "disk_empty_trash"})
+        assert tool.annotations.destructive_hint is (name in {"disk_delete"})
 
 
 WIKI_READ_TOOLS = {

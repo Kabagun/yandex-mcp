@@ -76,9 +76,10 @@ async def test_trash_list_filters_by_original_path_and_restore_authorizes_effect
 
 
 @pytest.mark.asyncio
-async def test_empty_trash_requires_root_global_gate_and_literal_confirmation() -> None:
+async def test_empty_trash_is_forbidden_even_with_all_legacy_gates() -> None:
     client = AsyncMock()
     for roots, global_flag, confirm in [
+        (["/"], True, True),
         (["/Work"], True, True),
         (["/"], False, True),
         (["/"], True, False),

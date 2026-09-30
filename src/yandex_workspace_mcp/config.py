@@ -1,9 +1,10 @@
 import base64
+import hashlib
 import hmac
 import ipaddress
 import os
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlsplit
 
 from pydantic import Field, SecretStr, ValidationError, field_validator, model_validator
@@ -37,6 +38,7 @@ class Settings(BaseSettings):
     )
 
     # Transports
+    mcp_profile: Literal["workspace", "disk", "mail"] = "workspace"
     mcp_transport: str = Field(
         default="stdio", description="MCP transport to use: 'stdio' or 'streamable-http'"
     )
@@ -70,6 +72,7 @@ class Settings(BaseSettings):
     # Yandex Workspace Config
     yandex_disk_enabled: bool = Field(default=True)
     yandex_wiki_enabled: bool = Field(default=True)
+    yandex_mail_enabled: bool = Field(default=False)
 
     yandex_oauth_token: SecretStr | None = Field(
         default=None, description="Global Yandex OAuth Token for local execution mode"
@@ -94,6 +97,13 @@ class Settings(BaseSettings):
     wiki_read: bool = Field(default=True)
     wiki_write: bool = Field(default=False)
     wiki_delete: bool = Field(default=False)
+
+    mail_read: bool = True
+    mail_write: bool = False
+    mail_delete: bool = False
+    mail_max_message_bytes: int = Field(default=10 * 1024 * 1024, ge=1024, le=50 * 1024 * 1024)
+    mail_max_attachment_bytes: int = Field(default=5 * 1024 * 1024, ge=1, le=25 * 1024 * 1024)
+    mail_timeout_seconds: int = Field(default=30, ge=1, le=120)
 
     # Allowed Roots
     disk_allowed_roots: list[str] = Field(default_factory=list)
@@ -218,13 +228,39 @@ class Settings(BaseSettings):
     @field_validator("mcp_static_scopes")
     @classmethod
     def validate_static_scopes(cls, values: list[str]) -> list[str]:
-        allowed = {"workspace:read", "workspace:write", "workspace:delete"}
+        allowed = {
+            "workspace:read",
+            "workspace:write",
+            "workspace:delete",
+            "mail:read",
+            "mail:write",
+            "mail:delete",
+        }
         if any(value not in allowed for value in values):
             raise ValueError("MCP static scopes contain an unknown workspace scope")
         return list(dict.fromkeys(values))
 
     @model_validator(mode="after")
     def validate_recovery_encryption_keys(self) -> "Settings":
+        if self.mcp_profile != "workspace":
+            expected = {
+                "yandex_disk_enabled": self.mcp_profile == "disk",
+                "yandex_wiki_enabled": False,
+                "yandex_mail_enabled": self.mcp_profile == "mail",
+            }
+            for name, enabled in expected.items():
+                if name in self.model_fields_set and getattr(self, name) != enabled:
+                    raise ValueError(f"{name} conflicts with the selected MCP profile")
+                object.__setattr__(self, name, enabled)
+        elif self.yandex_mail_enabled:
+            raise ValueError("Mail requires its own MCP_PROFILE=mail process")
+        if self.yandex_mail_enabled and self.yandex_auth_mode is not YandexAuthMode.MULTI_USER:
+            raise ValueError("Mail requires per-user OAuth authentication")
+        if self.disk_allow_global_destructive:
+            raise ValueError("Global trash purge is not supported")
+        namespace = "mail:" if self.mcp_profile == "mail" else "workspace:"
+        if any(not scope.startswith(namespace) for scope in self.mcp_static_scopes):
+            raise ValueError("MCP static scopes must belong to the selected profile")
         keys = [item.get_secret_value() for item in self.mcp_token_encryption_keys]
         for value in keys:
             try:
@@ -320,7 +356,7 @@ class Settings(BaseSettings):
         for field in cls.model_fields.values():
             if isinstance(field.validation_alias, str):
                 known.add(field.validation_alias.upper())
-        prefixes = ("MCP_", "YANDEX_", "DISK_", "WIKI_")
+        prefixes = ("MCP_", "YANDEX_", "DISK_", "WIKI_", "MAIL_")
         unknown = sorted(
             key for key in os.environ if key.startswith(prefixes) and key.upper() not in known
         )
@@ -347,6 +383,14 @@ class Settings(BaseSettings):
             return ipaddress.ip_address(normalized).is_loopback
         except ValueError:
             return False
+
+    @property
+    def auth_storage_prefix(self) -> str:
+        """Isolate every Redis record by service profile and public OAuth issuer."""
+        if self.mcp_profile == "workspace":
+            return "ywmcp:auth:v1"
+        issuer_hash = hashlib.sha256(self.mcp_issuer_url.rstrip("/").encode()).hexdigest()[:24]
+        return f"ywmcp:{self.mcp_profile}:{issuer_hash}:auth:v1"
 
 
 def get_settings() -> Settings:

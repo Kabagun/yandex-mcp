@@ -1318,21 +1318,6 @@
     "title": "DiskSearchResponse",
     "type": "object"
   },
-  "DiskTrashEmptyInput": {
-    "additionalProperties": false,
-    "properties": {
-      "confirm": {
-        "const": true,
-        "title": "Confirm",
-        "type": "boolean"
-      }
-    },
-    "required": [
-      "confirm"
-    ],
-    "title": "DiskTrashEmptyInput",
-    "type": "object"
-  },
   "DiskTrashListInput": {
     "additionalProperties": false,
     "properties": {

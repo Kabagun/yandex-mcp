@@ -160,3 +160,127 @@ async def test_redis_key_rotation_reads_old_ciphertext() -> None:
     finally:
         await old.close()
         await rotated.close()
+
+
+@pytest.mark.asyncio
+async def test_dedicated_profiles_isolate_every_record_kind_even_with_same_key() -> None:
+    pytest.importorskip("redis")
+    from yandex_workspace_mcp.auth.models import (
+        DownstreamCredentialRecord,
+        OAuthClientRecord,
+        RecoveryHandleRecord,
+    )
+    from yandex_workspace_mcp.auth.redis_store import RedisTokenStore
+    from yandex_workspace_mcp.config import Settings
+
+    stores = []
+    suffix = uuid.uuid4().hex
+    for profile in ("disk", "mail"):
+        settings = Settings(
+            mcp_profile=profile,
+            mcp_transport="streamable-http",
+            mcp_auth_mode="multi-user",
+            yandex_auth_mode="multi-user",
+            yandex_oauth_client_id=f"{profile}-client",
+            yandex_oauth_client_secret="test-secret",
+            mcp_issuer_url=f"https://{profile}.example",
+            mcp_oauth_callback_url=f"https://{profile}.example/oauth/yandex/callback",
+        )
+        stores.append(
+            RedisTokenStore(
+                (b"p" * 32,),
+                url=REDIS_URL,
+                prefix=f"{settings.auth_storage_prefix}:test:{suffix}",
+            )
+        )
+    disk, mail = stores
+    await disk.open()
+    await mail.open()
+    expiry = disk._clock() + 30
+    try:
+        await disk.put_client(
+            OAuthClientRecord(
+                client_id="shared",
+                redirect_uris=("https://client.example/cb",),
+                expires_at=expiry,
+            )
+        )
+        await disk.put_state(
+            "shared",
+            OAuthStateRecord(
+                client_id="shared",
+                redirect_uri="https://client.example/cb",
+                scopes=("workspace:read",),
+                code_challenge="challenge",
+                resource="https://disk.example/mcp",
+                expires_at=expiry,
+            ),
+        )
+        await disk.put_authorization_code(
+            "shared",
+            AuthorizationCodeRecord(
+                client_id="shared",
+                redirect_uri="https://client.example/cb",
+                scopes=("workspace:read",),
+                code_challenge="challenge",
+                resource="https://disk.example/mcp",
+                subject="shared",
+                expires_at=expiry,
+            ),
+        )
+        await disk.put_token_pair(
+            access_token="shared",
+            access_record=AccessTokenRecord(
+                client_id="shared",
+                scopes=("workspace:read",),
+                subject="shared",
+                resource="https://disk.example/mcp",
+                expires_at=expiry,
+                refresh_token="shared",
+            ),
+            refresh_token="shared",
+            refresh_record=RefreshTokenRecord(
+                client_id="shared",
+                scopes=("workspace:read",),
+                subject="shared",
+                expires_at=expiry,
+                access_token="shared",
+            ),
+        )
+        await disk.put_downstream(
+            "shared",
+            DownstreamCredentialRecord(
+                principal_id="shared",
+                access_token="disk-secret",
+                expires_at=expiry,
+            ),
+        )
+        await disk.put_recovery(
+            "shared",
+            "shared",
+            RecoveryHandleRecord(
+                principal_id="shared",
+                upstream_token="recovery-secret",
+                normalized_locator="/item",
+                expires_at=expiry,
+            ),
+        )
+        for method in (
+            "get_client",
+            "consume_state",
+            "get_authorization_code",
+            "get_access_token",
+            "get_refresh_token",
+            "get_downstream",
+        ):
+            with pytest.raises(TokenStoreMiss):
+                await getattr(mail, method)("shared")
+        with pytest.raises(TokenStoreMiss):
+            await mail.consume_recovery("shared", "shared")
+        await mail.delete_downstream("shared")
+        await mail.revoke_token_pair(access_token="shared", refresh_token="shared")
+        assert (await disk.get_downstream("shared")).access_token == "disk-secret"
+        assert (await disk.get_access_token("shared")).subject == "shared"
+    finally:
+        await disk.close()
+        await mail.close()

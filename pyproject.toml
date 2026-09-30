@@ -1,7 +1,7 @@
 [project]
 name = "yandex-workspace-mcp"
-version = "0.1.0"
-description = "Production-grade MCP server for Yandex Disk and Yandex Wiki"
+version = "0.2.0"
+description = "Multi-user MCP server with isolated Yandex Disk and Mail profiles"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
 dependencies = [

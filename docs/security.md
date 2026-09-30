@@ -45,3 +45,9 @@ Every modifying operation (`create`, `update`, `append`, `move`, `copy`, `delete
 - Destructive actions (like `permanently=True` deletions) are explicitly flagged in the log.
 
 Audit records use a fixed twelve-field schema and a correlation ID. Tokens, headers, cookies, request/response bodies, content, public keys, signed URL queries, and raw exceptions are neither audit fields nor public error text.
+
+Mail is isolated from Disk by process, OAuth client, issuer, keys, token namespace
+and MCP scopes. Message content, addresses and credentials are excluded from
+mutation audit events. Mail exposes only structured bounded operations, verified
+TLS and XOAUTH2; no raw IMAP, global purge, EXPUNGE or automatic SMTP retries.
+Read-only mock tests do not certify a live upstream OAuth connection.

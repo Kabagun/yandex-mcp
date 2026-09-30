@@ -21,19 +21,30 @@ _IMPLIED_SCOPES: dict[WorkspaceScope, frozenset[WorkspaceScope]] = {
     WorkspaceScope.DELETE: frozenset(
         {WorkspaceScope.READ, WorkspaceScope.WRITE, WorkspaceScope.DELETE}
     ),
+    WorkspaceScope.MAIL_READ: frozenset({WorkspaceScope.MAIL_READ}),
+    WorkspaceScope.MAIL_WRITE: frozenset({WorkspaceScope.MAIL_READ, WorkspaceScope.MAIL_WRITE}),
+    WorkspaceScope.MAIL_DELETE: frozenset(
+        {WorkspaceScope.MAIL_READ, WorkspaceScope.MAIL_WRITE, WorkspaceScope.MAIL_DELETE}
+    ),
 }
 
 
 def scopes_for_permissions(
-    *, can_read: bool, can_write: bool, can_delete: bool
+    *, can_read: bool, can_write: bool, can_delete: bool, service: str = "workspace"
 ) -> frozenset[WorkspaceScope]:
+    """Expand operation permissions within one service, never across profiles."""
+    read, write, delete = (
+        (WorkspaceScope.MAIL_READ, WorkspaceScope.MAIL_WRITE, WorkspaceScope.MAIL_DELETE)
+        if service == "mail"
+        else (WorkspaceScope.READ, WorkspaceScope.WRITE, WorkspaceScope.DELETE)
+    )
     scopes: set[WorkspaceScope] = set()
     if can_read:
-        scopes.update(_IMPLIED_SCOPES[WorkspaceScope.READ])
+        scopes.update(_IMPLIED_SCOPES[read])
     if can_write:
-        scopes.update(_IMPLIED_SCOPES[WorkspaceScope.WRITE])
+        scopes.update(_IMPLIED_SCOPES[write])
     if can_delete:
-        scopes.update(_IMPLIED_SCOPES[WorkspaceScope.DELETE])
+        scopes.update(_IMPLIED_SCOPES[delete])
     return frozenset(scopes)
 
 
@@ -83,11 +94,10 @@ def current_principal(
     )
 
 
-def require_scope(principal: WorkspacePrincipal, operation: OperationClass) -> None:
-    required = {
-        OperationClass.READ: WorkspaceScope.READ,
-        OperationClass.WRITE: WorkspaceScope.WRITE,
-        OperationClass.DELETE: WorkspaceScope.DELETE,
-    }[operation]
+def require_scope(
+    principal: WorkspacePrincipal, operation: OperationClass, *, service: str = "workspace"
+) -> None:
+    """Require an exact operation scope belonging to the requested service."""
+    required = WorkspaceScope(f"{service}:{operation.value}")
     if required not in principal.scopes:
         raise PermissionDenied()

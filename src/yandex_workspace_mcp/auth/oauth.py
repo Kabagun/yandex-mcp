@@ -9,6 +9,7 @@ from collections.abc import Callable, Generator, Sequence
 
 import httpx
 from httpx import Auth, Request, Response
+from mcp.server.auth.handlers.revoke import RevocationHandler
 from mcp.server.auth.provider import (
     AccessToken,
     AuthorizationCode,
@@ -23,7 +24,8 @@ from mcp.shared.auth import OAuthClientInformationFull
 from mcp.shared.auth import OAuthToken as McpOAuthToken
 from pydantic import AnyUrl
 from starlette.requests import Request as StarletteRequest
-from starlette.responses import PlainTextResponse, RedirectResponse
+from starlette.responses import JSONResponse, PlainTextResponse, RedirectResponse
+from starlette.types import Message
 
 from yandex_workspace_mcp.auth.models import (
     AccessTokenRecord,
@@ -40,6 +42,41 @@ from yandex_workspace_mcp.auth.stores import TokenStore, TokenStoreMiss
 registration_source_var: contextvars.ContextVar[str] = contextvars.ContextVar(
     "oauth_registration_source", default="unknown"
 )
+
+
+class CompatibleRevocationHandler(RevocationHandler):
+    """Normalize the SDK 2.0 optional-secret field for public RFC 7009 clients.
+
+    Authentication, token ownership and revocation still use the SDK handler.
+    An empty field never bypasses authentication for confidential clients.
+    """
+
+    async def handle(self, request: StarletteRequest):
+        if request.headers.get("content-type", "").split(";")[0] != (
+            "application/x-www-form-urlencoded"
+        ):
+            return JSONResponse({"error": "invalid_request"}, status_code=400)
+        body = bytearray()
+        async for chunk in request.stream():
+            body.extend(chunk)
+            if len(body) > 16_384:
+                return JSONResponse({"error": "invalid_request"}, status_code=413)
+        try:
+            fields = urllib.parse.parse_qsl(body.decode("utf-8"), keep_blank_values=True)
+        except UnicodeError:
+            return JSONResponse({"error": "invalid_request"}, status_code=400)
+        if not any(key == "client_secret" for key, _ in fields):
+            fields.append(("client_secret", ""))
+        normalized = urllib.parse.urlencode(fields).encode()
+        scope = dict(request.scope)
+        scope["headers"] = [
+            (key, value) for key, value in request.scope["headers"] if key != b"content-length"
+        ] + [(b"content-length", str(len(normalized)).encode())]
+
+        async def receive() -> Message:
+            return {"type": "http.request", "body": normalized, "more_body": False}
+
+        return await super().handle(StarletteRequest(scope, receive=receive))
 
 
 class DiskAuth(Auth):
@@ -76,6 +113,7 @@ class YandexMcpOAuthProvider(
         yandex_client_id: str,
         yandex_callback_url: str,
         valid_scopes: Sequence[str],
+        upstream_scopes: Sequence[str] = (),
         clock: Callable[[], float] = time.time,
         random_token: Callable[[int], str] = secrets.token_urlsafe,
         state_ttl_seconds: int = 600,
@@ -90,6 +128,7 @@ class YandexMcpOAuthProvider(
         self.yandex_client_id = yandex_client_id
         self.yandex_callback_url = yandex_callback_url
         self.valid_scopes = tuple(valid_scopes)
+        self.upstream_scopes = tuple(upstream_scopes)
         self._clock = clock
         self._random_token = random_token
         self._state_ttl = state_ttl_seconds
@@ -196,6 +235,7 @@ class YandexMcpOAuthProvider(
                 "state": state,
                 "code_challenge": upstream_challenge,
                 "code_challenge_method": "S256",
+                **({"scope": " ".join(self.upstream_scopes)} if self.upstream_scopes else {}),
             }
         )
         return f"https://oauth.yandex.ru/authorize?{query}"
@@ -364,6 +404,10 @@ class YandexMcpOAuthProvider(
             record = await self.store.get_access_token(token)
         except TokenStoreMiss:
             return None
+        if record.resource != self.resource_server_url:
+            return None
+        if not set(record.scopes).issubset(self.valid_scopes):
+            return None
         return AccessToken(
             token=token,
             client_id=record.client_id,
@@ -472,6 +516,7 @@ class YandexOAuthCallback:
         callback_url: str,
         organization_id: str | None = None,
         cloud_organization: bool = False,
+        require_email: bool = False,
         client: httpx.AsyncClient | None = None,
         clock: Callable[[], float] = time.time,
         downstream_ttl_seconds: int = 30 * 24 * 3600,
@@ -483,6 +528,7 @@ class YandexOAuthCallback:
         self.callback_url = callback_url
         self.organization_id = organization_id
         self.cloud_organization = cloud_organization
+        self.require_email = require_email
         self.client = client or httpx.AsyncClient(
             timeout=httpx.Timeout(10.0, connect=5.0), follow_redirects=False
         )
@@ -540,6 +586,14 @@ class YandexOAuthCallback:
             yandex_subject = account_payload.get("id")
             if not isinstance(yandex_subject, str) or not (1 <= len(yandex_subject) <= 256):
                 raise ValueError("missing account subject")
+            email = account_payload.get("default_email") if self.require_email else None
+            if self.require_email and (
+                not isinstance(email, str)
+                or not (3 <= len(email) <= 254)
+                or email.count("@") != 1
+                or any(character.isspace() or ord(character) < 32 for character in email)
+            ):
+                raise ValueError("missing account email")
         except (httpx.HTTPError, ValueError, TypeError):
             return self._redirect(self.provider.authorization_error_redirect(pending))
 
@@ -555,6 +609,7 @@ class YandexOAuthCallback:
                 organization_id=self.organization_id,
                 cloud_organization=self.cloud_organization,
                 yandex_subject=yandex_subject,
+                email=email,
             ),
         )
         location = await self.provider.complete_authorization_record(pending, yandex_subject)

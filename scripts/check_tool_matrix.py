@@ -8,7 +8,7 @@ from pydantic import SecretStr
 from yandex_workspace_mcp.config import Settings
 from yandex_workspace_mcp.server import create_application
 
-EXPECTED = [19, 20, 54, 49]
+EXPECTED = [19, 20, 53, 48]
 
 
 async def main() -> None:
@@ -32,7 +32,6 @@ async def main() -> None:
         wiki_upload_allowed_dirs=[temporary_root],
         disk_upload_url_allowed_hosts=["downloads.example.test"],
         disk_allowed_public_keys=["public-key"],
-        disk_allow_global_destructive=True,
     )
     remote_all = Settings(
         **{

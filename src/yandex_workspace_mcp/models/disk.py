@@ -117,10 +117,6 @@ class DiskTrashRestoreInput(PublicModel):
     overwrite: bool = False
 
 
-class DiskTrashEmptyInput(PublicModel):
-    confirm: Literal[True]
-
-
 class DiskInfoWire(WireModel):
     total_space: int
     used_space: int

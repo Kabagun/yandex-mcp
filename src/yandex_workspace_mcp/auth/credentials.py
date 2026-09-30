@@ -94,6 +94,7 @@ class StoredCredentialProvider:
             record.access_token,
             organization_id=record.organization_id,
             cloud_organization=record.cloud_organization,
+            email=record.email,
         )
 
     async def _refresh(self, principal_id: str) -> DownstreamCredentialRecord:

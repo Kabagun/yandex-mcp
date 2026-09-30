@@ -14,7 +14,6 @@ from yandex_workspace_mcp.models.disk import (
     DiskPublicResourceInput,
     DiskRenameInput,
     DiskResourceWire,
-    DiskTrashEmptyInput,
     DiskURLUploadInput,
     UploadJobIDInput,
     UploadJobListInput,
@@ -73,12 +72,6 @@ def test_upload_job_filters_are_typed() -> None:
     assert UploadJobListInput(status="running").status == "running"
     with pytest.raises(ValidationError):
         UploadJobListInput.model_validate({"status": "unknown"})
-
-
-def test_trash_empty_requires_literal_true() -> None:
-    assert DiskTrashEmptyInput(confirm=True).confirm is True
-    with pytest.raises(ValidationError):
-        DiskTrashEmptyInput.model_validate({"confirm": False})
 
 
 def test_disk_wire_mapping_discards_unknown_and_signed_url_fields() -> None:
