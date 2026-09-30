@@ -68,9 +68,11 @@ the access/refresh pair; another user's grant and the other profile are unaffect
 
 Mail resolves request-local credentials before starting a blocking operation in
 a worker thread. Every operation owns a fresh verified TLS connection to
-`imap.yandex.ru:993` or `smtp.yandex.ru:465`. No global account or connection pool
-selects a mailbox. Access tokens are refreshed through the existing OAuth provider.
-IMAP/SMTP commands are never retried automatically.
+`imap.yandex.ru:993` or `smtp.yandex.ru:587`. SMTP requires STARTTLS with certificate
+and hostname verification, then a second EHLO before XOAUTH2 authentication. A failed
+TLS negotiation stops submission. No global account or connection pool selects a
+mailbox. Access tokens are refreshed through the existing OAuth provider. IMAP/SMTP
+commands are never retried automatically.
 
 ## Mail tool contract
 

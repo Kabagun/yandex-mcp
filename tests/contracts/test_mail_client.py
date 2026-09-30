@@ -8,6 +8,7 @@ import builtins
 import hashlib
 import imaplib
 import smtplib
+import ssl
 from contextvars import ContextVar
 from email import policy
 from email.message import EmailMessage
@@ -134,7 +135,14 @@ class FakeImap:
 class FakeSmtp:
     def __init__(self) -> None:
         self.sock = Mock()
-        self.esmtp_features = {"auth": "PLAIN XOAUTH2"}
+        self.esmtp_features: dict[str, str] = {}
+        self.pre_tls_features = {"starttls": ""}
+        self.post_tls_features = {"auth": "PLAIN XOAUTH2"}
+        self.tls = False
+        self.pre_tls_ehlo_code = 250
+        self.post_tls_ehlo_code = 250
+        self.starttls_code = 220
+        self.starttls_error: Exception | None = None
         self.calls: list[tuple[Any, ...]] = []
         self.refused: dict[str, Any] = {}
         self.auth_error: Exception | None = None
@@ -142,9 +150,23 @@ class FakeSmtp:
 
     def ehlo(self) -> tuple[int, bytes]:
         self.calls.append(("ehlo",))
-        return 250, b"hello"
+        self.esmtp_features = self.post_tls_features if self.tls else self.pre_tls_features
+        return (self.post_tls_ehlo_code if self.tls else self.pre_tls_ehlo_code), b"hello"
+
+    def has_extn(self, name: str) -> bool:
+        return name in self.esmtp_features
+
+    def starttls(self, *, context: ssl.SSLContext) -> tuple[int, bytes]:
+        self.calls.append(("starttls", context))
+        if self.starttls_error:
+            raise self.starttls_error
+        if self.starttls_code == 220:
+            self.tls = True
+            self.esmtp_features = {}
+        return self.starttls_code, b"private-token STARTTLS response"
 
     def auth(self, mechanism: str, callback: Any) -> None:
+        assert self.tls
         self.calls.append(("auth", mechanism, callback(), callback(b"challenge")))
         if self.auth_error:
             raise self.auth_error
@@ -157,6 +179,8 @@ class FakeSmtp:
 
     def close(self) -> None:
         self.calls.append(("close",))
+        self.tls = False
+        self.esmtp_features = {}
 
 
 @pytest.fixture
@@ -166,7 +190,8 @@ def transports(monkeypatch):
     imap_factory = Mock(return_value=imap)
     smtp_factory = Mock(return_value=smtp)
     monkeypatch.setattr(imaplib, "IMAP4_SSL", imap_factory)
-    monkeypatch.setattr(smtplib, "SMTP_SSL", smtp_factory)
+    monkeypatch.setattr(smtplib, "SMTP", smtp_factory)
+    monkeypatch.setattr(smtplib, "SMTP_SSL", Mock(side_effect=AssertionError("TLS fallback")))
     return imap, smtp, imap_factory, smtp_factory
 
 
@@ -433,14 +458,61 @@ async def test_smtp_fixed_tls_from_bcc_and_partial_acceptance(transports) -> Non
     assert result.accepted_recipients == ["to@example.test", "blind@example.test"]
     assert result.rejected_recipients == ["refused@example.test"]
     assert not result.delivery_confirmed and not result.sent_copy_saved
-    assert factory.call_args.args == ("smtp.yandex.ru", 465)
-    assert factory.call_args.kwargs["context"].check_hostname
+    assert factory.call_args.args == ("smtp.yandex.ru", 587)
+    assert factory.call_args.kwargs["timeout"] == 30
+    assert [call[0] for call in smtp.calls] == [
+        "ehlo",
+        "starttls",
+        "ehlo",
+        "auth",
+        "sendmail",
+        "close",
+    ]
+    context = smtp.calls[1][1]
+    assert context.check_hostname and context.verify_mode == ssl.CERT_REQUIRED
+    assert smtp.calls[3][1:] == (
+        "XOAUTH2",
+        "user=owner@yandex.ru\x01auth=Bearer private-token\x01\x01",
+        "",
+    )
     sent = next(call for call in smtp.calls if call[0] == "sendmail")
     parsed = BytesParser(policy=policy.default).parsebytes(sent[3])
     assert sent[1] == "owner@yandex.ru" and parsed["From"] == "owner@yandex.ru"
     assert parsed["Date"] is not None
     assert parsed["Bcc"] is None and "blind@example.test" not in sent[3].decode()
     assert smtp.calls[-1] == ("close",)
+
+
+@pytest.mark.parametrize(
+    "attribute,value,error",
+    [
+        ("pre_tls_features", {"auth": "XOAUTH2"}, APIError),
+        ("pre_tls_ehlo_code", 500, APIError),
+        ("starttls_code", 454, APIError),
+        (
+            "starttls_error",
+            smtplib.SMTPNotSupportedError("private-token response"),
+            UpstreamUnavailable,
+        ),
+        (
+            "starttls_error",
+            ssl.SSLCertVerificationError("private-token certificate"),
+            UpstreamUnavailable,
+        ),
+        ("starttls_error", TimeoutError("private-token handshake"), UpstreamTimeout),
+        ("post_tls_ehlo_code", 500, APIError),
+        ("post_tls_features", {"auth": "PLAIN"}, AuthenticationError),
+    ],
+)
+async def test_smtp_tls_negotiation_fails_closed(transports, attribute, value, error) -> None:
+    _, smtp, _, factory = transports
+    setattr(smtp, attribute, value)
+    with pytest.raises(error) as captured:
+        await client().send(MailOutgoingMessage(to=["to@example.test"], text="body"))
+    assert "private-token" not in str(captured.value)
+    assert not any(call[0] in {"auth", "sendmail"} for call in smtp.calls)
+    assert smtp.calls[-1] == ("close",)
+    factory.assert_called_once()
 
 
 @pytest.mark.parametrize(

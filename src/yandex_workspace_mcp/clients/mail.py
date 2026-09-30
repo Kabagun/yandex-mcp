@@ -626,29 +626,41 @@ class YandexMailClient:
         email = credential.email or ""
         raw, recipients, message_id = self._outgoing(email, message, reply_id=reply_id)
         deadline = time.monotonic() + self.timeout_seconds
-        connection = smtplib.SMTP_SSL(
+        connection = smtplib.SMTP(
             "smtp.yandex.ru",
-            465,
-            context=ssl.create_default_context(),
+            587,
             timeout=self.timeout_seconds,
         )
-        try:
-            connection.ehlo()
-            if "XOAUTH2" not in connection.esmtp_features.get("auth", "").upper().split():
-                raise AuthenticationError()
-            authentication = f"user={email}\x01auth=Bearer {credential.token}\x01\x01"
-            try:
-                connection.auth(
-                    "XOAUTH2", lambda challenge=None: authentication if challenge is None else ""
-                )
-            except smtplib.SMTPException:
-                raise AuthenticationError() from None
+
+        def set_remaining_timeout() -> None:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise UpstreamTimeout()
             if connection.sock is None:
                 raise UpstreamUnavailable()
             connection.sock.settimeout(remaining)
+
+        try:
+            set_remaining_timeout()
+            if connection.ehlo()[0] != 250 or not connection.has_extn("starttls"):
+                raise APIError()
+            set_remaining_timeout()
+            if connection.starttls(context=ssl.create_default_context())[0] != 220:
+                raise APIError()
+            set_remaining_timeout()
+            if connection.ehlo()[0] != 250:
+                raise APIError()
+            if "XOAUTH2" not in connection.esmtp_features.get("auth", "").upper().split():
+                raise AuthenticationError()
+            authentication = f"user={email}\x01auth=Bearer {credential.token}\x01\x01"
+            set_remaining_timeout()
+            try:
+                connection.auth(
+                    "XOAUTH2", lambda challenge=None: authentication if challenge is None else ""
+                )
+            except smtplib.SMTPException:
+                raise AuthenticationError() from None
+            set_remaining_timeout()
             try:
                 refused = connection.sendmail(email, recipients, raw)
             except smtplib.SMTPRecipientsRefused:
