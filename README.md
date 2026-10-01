@@ -24,7 +24,7 @@ The offline example uses a mocked upstream client. It demonstrates local authori
 
 ## Features
 
-- **Yandex Disk Integration**: 21 parity tools plus `disk_read` and inline `disk_upload` cover capacity, list/recent/search, metadata, signed links, uploads, mutations, public resources, Trash, and bounded local jobs.
+- **Yandex Disk Integration**: 21 parity tools plus `disk_read`, inline `disk_upload`, and ChatGPT binary `disk_upload_file` cover capacity, list/recent/search, metadata, signed links, uploads, mutations, public resources, Trash, and bounded local jobs.
 - **Yandex Mail Integration**: native TLS IMAP/SMTP XOAUTH2 for folders, bounded search/list/read, attachments, sending, replies, forwarding, read flags and moving to Trash. No account-wide purge or automatic send retry.
 - **Yandex Wiki Integration**: 27 typed tools plus the `wiki_get_tree` compatibility alias cover search, page reads/writes, comments, resources, recovery, attachments, and dynamic tables.
 - **Unified Workspace Search**: A single `search` tool allows agents to query both Disk and Wiki simultaneously.
@@ -83,7 +83,7 @@ DISK_DELETE=false
 DISK_ALLOWED_ROOTS=/Work,/Research
 # Trusted stdio only. Enables local upload plus background job tools.
 DISK_UPLOAD_ALLOWED_DIRS=/Users/me/disk-uploads
-# Maximum descriptor-based/inline upload size in bytes (default: 104857600).
+# Maximum ChatGPT-file/descriptor-based/inline upload size in bytes (default: 104857600).
 DISK_MAX_UPLOAD_BYTES=104857600
 # Enables server-side URL import only for these exact HTTPS hosts.
 DISK_UPLOAD_URL_ALLOWED_HOSTS=downloads.example.com
@@ -125,7 +125,11 @@ Page deletion returns a random MCP recovery handle rather than Yandex's token. H
 
 `DISK_READ` exposes `disk_info`, list/recent/search/metadata/download, `disk_list_trash`, and the bounded-text `disk_read` compatibility tool. `disk_get_public_resource` is additionally registered only when `DISK_ALLOWED_PUBLIC_KEYS` is non-empty. Every direct path is checked before the HTTP call; recent, search, embedded children, and Trash results are post-filtered before output.
 
-`DISK_WRITE` exposes inline upload, folder/copy/move/rename, publish/unpublish, and—when `DISK_UPLOAD_URL_ALLOWED_HOSTS` is non-empty—URL import. Local-file upload and its four local job tools require `stdio` plus `DISK_UPLOAD_ALLOWED_DIRS`; they are absent remotely. Jobs are in-memory, bounded, expire, never return source paths or credentials, and are cancelled during shutdown.
+`DISK_WRITE` exposes inline and ChatGPT-file upload, folder/copy/move/rename, publish/unpublish, and—when `DISK_UPLOAD_URL_ALLOWED_HOSTS` is non-empty—URL import. Local-file upload and its four local job tools require `stdio` plus `DISK_UPLOAD_ALLOWED_DIRS`; they are absent remotely. Jobs are in-memory, bounded, expire, never return source paths or credentials, and are cancelled during shutdown.
+
+For an attached DOCX, PDF, image, or other binary file, use `disk_upload_file(file, destination_path, overwrite=false)`. ChatGPT supplies the `file` object through `_meta["openai/fileParams"] = ["file"]` using the official [file input contract](https://developers.openai.com/plugins/reference#define-file-inputs): required string fields `download_url` and `file_id`, optional string fields `mime_type` and `file_name`, and no extra fields. The tool is available on remote Disk connections with `workspace:write`, and is absent from Mail and read-only Disk connections. Refresh the app's tools after updating the server, then attach a file and ask ChatGPT to save it to an explicit Disk path.
+
+The server checks write authorization and `DISK_ALLOWED_ROOTS` before downloading the file. It fetches the temporary public HTTPS URL with a separate credential-free, DNS-pinned client and transfers the exact bytes to one Yandex upload target. The source filename and MIME type are untrusted metadata; `file_id` is opaque and never opens a local path. Both declared and streamed bytes are limited by `DISK_MAX_UPLOAD_BYTES` (100 MiB by default). Redirects, private addresses, and compressed HTTP responses are refused. Source URLs and IDs are redacted; expired files require another attachment. Existing destination files are preserved by default. `disk_upload(path, content, overwrite=true)` retains its existing UTF-8 text behavior.
 
 `DISK_DELETE` exposes resource deletion and Trash restore. Permanent deletion of a configured root is refused. Account-wide Trash purge is prohibited: there is no `disk_empty_trash` tool, the service rejects legacy purge calls, and `DISK_ALLOW_GLOBAL_DESTRUCTIVE=true` is rejected at startup.
 

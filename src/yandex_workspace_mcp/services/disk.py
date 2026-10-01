@@ -7,6 +7,7 @@ import structlog
 
 from ..clients.base import RequestCredentials
 from ..clients.disk import YandexDiskClient
+from ..clients.files import PublicFileTransferClient
 from ..clients.signed import SignedTransferClient
 from ..jobs.uploads import UploadJobStore
 from ..models.disk import (
@@ -19,6 +20,7 @@ from ..models.disk import (
     DiskSearchResponse,
     DiskSort,
     DiskTrashPage,
+    OpenAIFile,
     TrashSort,
     UploadJobListResponse,
     UploadJobResponse,
@@ -47,6 +49,7 @@ class DiskService:
         upload_allowed_dirs: list[str] | None = None,
         max_upload_bytes: int = 100 * 1024 * 1024,
         signed_client: SignedTransferClient | None = None,
+        file_source_client: PublicFileTransferClient | None = None,
         upload_url_allowed_hosts: list[str] | None = None,
         allowed_public_keys: list[str] | None = None,
         allow_global_destructive: bool = False,
@@ -65,6 +68,7 @@ class DiskService:
         self.upload_allowed_dirs = list(upload_allowed_dirs or [])
         self.max_upload_bytes = max_upload_bytes
         self.signed_client = signed_client
+        self.file_source_client = file_source_client
         self.upload_url_allowed_hosts = list(upload_url_allowed_hosts or [])
         self.allowed_public_keys = list(allowed_public_keys or [])
         self.allow_global_destructive = allow_global_destructive
@@ -474,6 +478,40 @@ class DiskService:
             audit_logger.log(
                 "disk.upload", path=valid_path, size=len(content), result="failure", error=str(e)
             )
+            raise
+
+    async def upload_file(
+        self,
+        file: OpenAIFile,
+        destination_path: str,
+        *,
+        overwrite: bool = False,
+        credentials: RequestCredentials | None = None,
+    ) -> DiskOperationResponse:
+        """Upload a ChatGPT file after authorizing the explicit Disk destination."""
+        if not self.can_write:
+            raise PermissionDenied("Disk write is disabled.")
+        destination = self.authorize_disk_path(destination_path)
+        if self.file_source_client is None or self.signed_client is None:
+            raise PermissionDenied("File upload transport is unavailable.")
+        logger.info("disk.upload_file", path=destination)
+        try:
+            content = await self.file_source_client.download(
+                file.download_url, max_bytes=self.max_upload_bytes
+            )
+            result = await self.client.upload_bytes(
+                destination,
+                content,
+                overwrite=overwrite,
+                signed_client=self.signed_client,
+                credentials=credentials,
+            )
+            audit_logger.log(
+                "disk.upload_file", path=destination, size=len(content), result="success"
+            )
+            return result
+        except Exception as exc:
+            audit_logger.log("disk.upload_file", path=destination, result="failure", error=str(exc))
             raise
 
     async def upload_local_file(

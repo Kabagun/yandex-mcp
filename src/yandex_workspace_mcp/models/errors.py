@@ -121,6 +121,8 @@ _SENSITIVE_KEYS = {
     "authorization_code",
     "code_verifier",
     "signed_url",
+    "download_url",
+    "file_id",
     "public_url",
     "redis_url",
     "state",

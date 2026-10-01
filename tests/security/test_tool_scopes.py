@@ -103,7 +103,7 @@ async def test_every_registered_tool_declares_one_enforced_workspace_scope(tmp_p
     )
 
     tools = await application.mcp_server.list_tools()
-    assert len(tools) == 53
+    assert len(tools) == 54
     for tool in tools:
         assert tool.meta is not None
         scopes = tool.meta.get("required_scopes")

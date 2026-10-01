@@ -8,7 +8,7 @@ from pydantic import SecretStr
 from yandex_workspace_mcp.config import Settings
 from yandex_workspace_mcp.server import create_application
 
-EXPECTED = [19, 20, 53, 48]
+EXPECTED = [19, 20, 54, 49]
 
 
 async def main() -> None:

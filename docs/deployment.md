@@ -25,6 +25,7 @@ Back up Redis consistently with the active encryption-key ring. Rotate by prepen
 ## Operational boundaries
 
 - Local descriptor upload and background job tools are intentionally absent over HTTP and in multi-user mode.
+- ChatGPT `disk_upload_file` is available remotely when Disk writes are enabled and the caller has `workspace:write`; `DISK_MAX_UPLOAD_BYTES` caps its source download (100 MiB default). Refresh ChatGPT's app tools to discover the file input after a server update.
 - Signed Yandex download/upload URLs are fetched by the server's isolated tokenless transport, not by the MCP client.
 - A passing health check does not verify Yandex credentials or live API compatibility.
 - Live contract tests require dedicated scratch roots and explicit secrets. They are not part of ordinary pull-request CI.

@@ -36,6 +36,8 @@ def test_recursive_redaction_removes_headers_bodies_and_url_secrets() -> None:
         "Authorization": "Bearer secret",
         "cookie": "session=secret",
         "response_body": "private content",
+        "file_id": "opaque-private-file",
+        "download_url": "https://files.example.test/private-capability?sig=private",
         "nested": {
             "url": "https://user:pass@example.com/path?token=secret#fragment",
             "safe": "kept",
@@ -47,6 +49,8 @@ def test_recursive_redaction_removes_headers_bodies_and_url_secrets() -> None:
     assert redacted["Authorization"] == "[REDACTED]"
     assert redacted["cookie"] == "[REDACTED]"
     assert redacted["response_body"] == "[REDACTED]"
+    assert redacted["file_id"] == "[REDACTED]"
+    assert redacted["download_url"] == "[REDACTED]"
     assert redacted["nested"]["url"] == "https://example.com/path"
     assert redacted["nested"]["safe"] == "kept"
 

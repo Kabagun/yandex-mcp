@@ -59,6 +59,7 @@ DISK_READ_TOOLS = {
 }
 DISK_WRITE_TOOLS = {
     "disk_upload",
+    "disk_upload_file",
     "disk_create_folder",
     "disk_copy",
     "disk_move",
@@ -121,7 +122,7 @@ async def test_exact_disk_tool_sets_and_approved_total_matrix(tmp_path) -> None:
     )
     from yandex_workspace_mcp.server import create_application
 
-    assert len(await create_application(local_all).mcp_server.list_tools()) == 53
+    assert len(await create_application(local_all).mcp_server.list_tools()) == 54
 
     remote_all = local_all.model_copy(
         update={
@@ -131,7 +132,7 @@ async def test_exact_disk_tool_sets_and_approved_total_matrix(tmp_path) -> None:
     )
     remote_disk = await _disk_tools(remote_all)
     assert not (set(remote_disk) & DISK_LOCAL_JOB_TOOLS)
-    assert len(await create_application(remote_all).mcp_server.list_tools()) == 48
+    assert len(await create_application(remote_all).mcp_server.list_tools()) == 49
 
 
 @pytest.mark.asyncio
@@ -159,7 +160,10 @@ async def test_disk_annotations_and_scope_metadata(tmp_path) -> None:
             or name == "disk_upload_from_url"
             else "workspace:read"
         )
-        assert tool.meta == {"required_scopes": [expected_scope]}
+        expected_meta = {"required_scopes": [expected_scope]}
+        if name == "disk_upload_file":
+            expected_meta["openai/fileParams"] = ["file"]
+        assert tool.meta == expected_meta
         assert tool.annotations.destructive_hint is (name in {"disk_delete"})
 
 

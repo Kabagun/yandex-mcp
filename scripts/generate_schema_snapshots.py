@@ -43,6 +43,8 @@ DISK_MODELS = (
     "DiskMoveInput",
     "DiskRenameInput",
     "DiskLocalUploadInput",
+    "OpenAIFile",
+    "DiskFileUploadInput",
     "UploadJobIDInput",
     "UploadJobListInput",
     "DiskURLUploadInput",

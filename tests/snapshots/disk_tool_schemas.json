@@ -48,6 +48,62 @@
     "title": "DiskDeleteInput",
     "type": "object"
   },
+  "DiskFileUploadInput": {
+    "$defs": {
+      "OpenAIFile": {
+        "additionalProperties": false,
+        "description": "ChatGPT file capability; IDs and metadata never select a local or Disk path.",
+        "properties": {
+          "download_url": {
+            "title": "Download Url",
+            "type": "string"
+          },
+          "file_id": {
+            "title": "File Id",
+            "type": "string"
+          },
+          "file_name": {
+            "title": "File Name",
+            "type": "string"
+          },
+          "mime_type": {
+            "title": "Mime Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "download_url",
+          "file_id"
+        ],
+        "title": "OpenAIFile",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "description": "Upload a ChatGPT file to an explicit, allowlisted Disk destination.",
+    "properties": {
+      "destination_path": {
+        "maxLength": 4096,
+        "minLength": 1,
+        "title": "Destination Path",
+        "type": "string"
+      },
+      "file": {
+        "$ref": "#/$defs/OpenAIFile"
+      },
+      "overwrite": {
+        "default": false,
+        "title": "Overwrite",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "file",
+      "destination_path"
+    ],
+    "title": "DiskFileUploadInput",
+    "type": "object"
+  },
   "DiskInfo": {
     "additionalProperties": false,
     "properties": {
@@ -1413,6 +1469,34 @@
       "destination_path"
     ],
     "title": "DiskURLUploadInput",
+    "type": "object"
+  },
+  "OpenAIFile": {
+    "additionalProperties": false,
+    "description": "ChatGPT file capability; IDs and metadata never select a local or Disk path.",
+    "properties": {
+      "download_url": {
+        "title": "Download Url",
+        "type": "string"
+      },
+      "file_id": {
+        "title": "File Id",
+        "type": "string"
+      },
+      "file_name": {
+        "title": "File Name",
+        "type": "string"
+      },
+      "mime_type": {
+        "title": "Mime Type",
+        "type": "string"
+      }
+    },
+    "required": [
+      "download_url",
+      "file_id"
+    ],
+    "title": "OpenAIFile",
     "type": "object"
   },
   "UploadJobIDInput": {

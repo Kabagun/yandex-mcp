@@ -1,8 +1,9 @@
 import urllib.parse
-from typing import Annotated, Literal, Self
+from typing import Annotated, Any, Literal, Self
 from uuid import UUID
 
 from pydantic import Field, model_validator
+from pydantic.json_schema import SkipJsonSchema
 
 from .base import PublicModel, WireModel
 
@@ -63,6 +64,31 @@ class DiskRenameInput(DiskPathInput):
 
 class DiskLocalUploadInput(PublicModel):
     file_path: Annotated[str, Field(min_length=1, max_length=4096)]
+    destination_path: DiskPath
+    overwrite: bool = False
+
+
+def _omit_file_default(schema: dict[str, Any]) -> None:
+    schema.pop("default", None)
+
+
+class OpenAIFile(PublicModel):
+    """ChatGPT file capability; IDs and metadata never select a local or Disk path."""
+
+    download_url: str
+    file_id: str
+    mime_type: str | SkipJsonSchema[None] = Field(
+        default=None, json_schema_extra=_omit_file_default
+    )
+    file_name: str | SkipJsonSchema[None] = Field(
+        default=None, json_schema_extra=_omit_file_default
+    )
+
+
+class DiskFileUploadInput(PublicModel):
+    """Upload a ChatGPT file to an explicit, allowlisted Disk destination."""
+
+    file: OpenAIFile
     destination_path: DiskPath
     overwrite: bool = False
 

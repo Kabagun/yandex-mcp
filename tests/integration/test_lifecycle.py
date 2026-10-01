@@ -79,6 +79,34 @@ async def test_lifespan_opens_and_closes_clients_exactly_once() -> None:
 
 
 @pytest.mark.asyncio
+async def test_write_only_disk_opens_and_closes_both_transfer_policies() -> None:
+    from yandex_workspace_mcp.server import ApplicationDependencies, create_application
+
+    disk, signed, source = (CloseTrackedClient() for _ in range(3))
+    application = create_application(
+        Settings(
+            yandex_oauth_token="token",
+            disk_allowed_roots=["/Work"],
+            disk_read=False,
+            disk_write=True,
+            yandex_wiki_enabled=False,
+        ),
+        ApplicationDependencies(
+            disk_client_factory=lambda: disk,
+            signed_client_factory=lambda: signed,
+            file_source_client_factory=lambda: source,
+        ),
+    )
+    async with application.lifespan() as state:
+        assert state.signed_client is signed
+        assert state.file_source_client is source
+        assert state.disk_service is not None
+        assert state.disk_service.file_source_client is source
+    await application.close()
+    assert disk.close_count == signed.close_count == source.close_count == 1
+
+
+@pytest.mark.asyncio
 async def test_partial_startup_closes_already_opened_client() -> None:
     from yandex_workspace_mcp.server import ApplicationDependencies, create_application
 

@@ -38,6 +38,7 @@ from .auth.scopes import (
 from .auth.stores import InMemoryTokenStore
 from .clients.base import RequestCredentials
 from .clients.disk import YandexDiskClient
+from .clients.files import PublicFileTransferClient
 from .clients.mail import YandexMailClient
 from .clients.signed import SignedTransferClient
 from .clients.wiki import YandexWikiClient
@@ -83,6 +84,7 @@ class ApplicationDependencies:
     auth_store_factory: ClientFactory | None = None
     oauth_http_client_factory: ClientFactory | None = None
     mail_client_factory: ClientFactory | None = None
+    file_source_client_factory: ClientFactory | None = None
 
 
 @dataclass(slots=True)
@@ -102,6 +104,7 @@ class ApplicationState:
     mail_client: Any | None = None
     mail_service: MailService | None = None
     profile_service: ProfileService | None = None
+    file_source_client: Any | None = None
 
 
 class Application:
@@ -281,11 +284,19 @@ class Application:
                 or (bool(self.settings.disk_upload_allowed_dirs) and self.settings.disk_write)
             )
             if trusted_local_upload or (
-                self.settings.yandex_disk_enabled and self.settings.disk_read
+                self.settings.yandex_disk_enabled
+                and (self.settings.disk_read or self.settings.disk_write)
             ):
                 signed_factory = self.dependencies.signed_client_factory or SignedTransferClient
                 signed_client = signed_factory()
                 self._opened_resources.append(signed_client)
+            file_source_client = None
+            if self.settings.yandex_disk_enabled and self.settings.disk_write:
+                file_source_factory = (
+                    self.dependencies.file_source_client_factory or PublicFileTransferClient
+                )
+                file_source_client = file_source_factory()
+                self._opened_resources.append(file_source_client)
             upload_job_store = None
             if (
                 self.settings.mcp_transport == "stdio"
@@ -317,6 +328,7 @@ class Application:
                         upload_allowed_dirs=self.settings.disk_upload_allowed_dirs,
                         max_upload_bytes=self.settings.disk_max_upload_bytes,
                         signed_client=signed_client,
+                        file_source_client=file_source_client,
                         upload_url_allowed_hosts=self.settings.disk_upload_url_allowed_hosts,
                         allowed_public_keys=self.settings.disk_allowed_public_keys,
                         allow_global_destructive=self.settings.disk_allow_global_destructive,
@@ -362,6 +374,7 @@ class Application:
                 mail_client=mail_client,
                 mail_service=mail_service,
                 profile_service=profile_service,
+                file_source_client=file_source_client,
             )
             return self.state
         except BaseException:

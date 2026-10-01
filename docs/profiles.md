@@ -71,6 +71,23 @@ error without a placeholder ID or upstream secrets.
 After a server update, refresh the app's tools in ChatGPT so it can discover this
 profile contract. This server change preserves existing OAuth grants.
 
+## Attached files on Disk
+
+The Disk profile publishes `disk_upload_file(file, destination_path, overwrite=false)`
+when `DISK_WRITE=true`. ChatGPT recognizes its `_meta["openai/fileParams"] = ["file"]`
+and supplies a file object with required string `download_url` and `file_id`, plus
+optional string `mime_type` and `file_name`, following the official
+[file input contract](https://developers.openai.com/plugins/reference#define-file-inputs).
+Attach a DOCX or another file, then ask to save it to a destination under
+`DISK_ALLOWED_ROOTS`. Refresh the app's tools after upgrading the server.
+
+The tool requires `workspace:write`, preserves binary bytes, and defaults to keeping
+existing destination files. File IDs never select server-local files; names and MIME
+metadata do not override the explicit destination. Temporary downloads must use
+public HTTPS, identity HTTP encoding, and stay within `DISK_MAX_UPLOAD_BYTES`.
+Expired download capabilities require attaching the file again. The Mail profile
+does not publish this Disk tool. Inline `disk_upload` continues to accept UTF-8 text.
+
 ## Process configuration and isolation
 
 Use [.env.disk.example](../.env.disk.example) and [.env.mail.example](../.env.mail.example)

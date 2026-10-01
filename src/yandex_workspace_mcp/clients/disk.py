@@ -354,12 +354,30 @@ class YandexDiskClient(BaseYandexClient):
         signed_client: SignedTransferClient,
         credentials: RequestCredentials | None = None,
     ) -> DiskOperationResponse:
+        return await self.upload_bytes(
+            path,
+            content.encode("utf-8"),
+            overwrite=overwrite,
+            signed_client=signed_client,
+            credentials=credentials,
+        )
+
+    async def upload_bytes(
+        self,
+        path: str,
+        content: bytes,
+        *,
+        overwrite: bool = False,
+        signed_client: SignedTransferClient,
+        credentials: RequestCredentials | None = None,
+    ) -> DiskOperationResponse:
+        """Obtain a Disk upload target and transfer the exact bytes with one PUT."""
         href = await self._get_upload_href(
             path,
             overwrite=overwrite,
             credentials=credentials,
         )
-        await signed_client.upload_bytes(href, content.encode("utf-8"))
+        await signed_client.upload_bytes(href, content)
         return DiskOperationResponse(status="completed", path=path)
 
     async def upload_from_url(

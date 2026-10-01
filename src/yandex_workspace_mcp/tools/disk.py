@@ -17,6 +17,7 @@ from ..models.disk import (
     DiskResourcePage,
     DiskSearchResponse,
     DiskSort,
+    OpenAIFile,
     TrashSort,
     UploadJobListResponse,
     UploadJobResponse,
@@ -199,7 +200,10 @@ def register_disk_tools(mcp: MCPServer, application: DiskApplication, settings: 
 
         @mcp.tool(
             name="disk_upload",
-            description="Upload bounded inline UTF-8 text to Yandex Disk",
+            description=(
+                "Upload bounded inline UTF-8 text to Yandex Disk. "
+                "Use disk_upload_file for attached files and binary documents such as DOCX."
+            ),
             annotations=WRITE_ANNOTATIONS,
             meta=_scope_meta(WorkspaceScope.WRITE),
         )
@@ -213,6 +217,26 @@ def register_disk_tools(mcp: MCPServer, application: DiskApplication, settings: 
                 path,
                 content,
                 overwrite=overwrite,
+            )
+
+        @mcp.tool(
+            name="disk_upload_file",
+            description=(
+                "Upload an attached ChatGPT file to an allowlisted Yandex Disk destination, "
+                "preserving binary bytes (including DOCX, PDF and images). "
+                "Existing files are preserved unless overwrite=true."
+            ),
+            annotations=WRITE_ANNOTATIONS,
+            meta={**_scope_meta(WorkspaceScope.WRITE), "openai/fileParams": ["file"]},
+        )
+        async def disk_upload_file(
+            file: OpenAIFile,
+            destination_path: str,
+            overwrite: bool = False,
+        ) -> DiskOperationResponse:
+            require_scope(application.principal, OperationClass.WRITE)
+            return await application.require_disk_service().upload_file(
+                file, destination_path, overwrite=overwrite
             )
 
         @mcp.tool(
