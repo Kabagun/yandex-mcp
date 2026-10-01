@@ -10,6 +10,10 @@ One Python codebase serving two isolated multi-user MCP connections: **Yandex Di
 
 Start with the [Disk and Mail profile setup](docs/profiles.md), including the exact Yandex OAuth fields, permission gates and mail tool contract.
 
+Multi-user connections expose an authenticated `get_profile` tool so ChatGPT can
+identify the connected Yandex account by its real login and, when permitted,
+email. Its profile ID stays the same across reconnections and token refreshes.
+
 ## Start here
 
 - **Review the engineering:** run the [credential-free permission demo](examples/permission_demo.py) and inspect [permission regression tests](tests/security/test_permission_gating.py).

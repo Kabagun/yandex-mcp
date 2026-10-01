@@ -33,6 +33,44 @@ Users must enable IMAP and OAuth tokens in their [mail client settings](https://
 No account password is used. Addresses are never accepted from a tool caller as
 a choice of account or sender.
 
+## Connected account profile
+
+Every multi-user OAuth endpoint publishes the authenticated, read-only,
+no-argument `get_profile` tool with `_meta["openai/profile"] = true` for
+[ChatGPT multiple-account connections](https://developers.openai.com/plugins/build/auth#support-multiple-accounts).
+The tool rejects extra arguments, including account selectors. It requires a valid
+connection without requesting additional MCP permissions; its `_meta.securitySchemes`
+declares OAuth with no extra scopes. Static-token, local-token and IAM configurations
+retain their existing tool lists.
+
+The result is one object at the top level of `structuredContent`, with the same
+JSON in its text content. `id` is a nonblank, opaque SHA-256 identifier derived
+solely from the immutable Yandex account subject and a fixed Yandex namespace.
+It remains stable across token refreshes, reconnects with different MCP client IDs,
+issuer changes and edits to login, name or email; different Yandex subjects have
+different IDs. It is separate from the MCP principal used to isolate grants,
+credentials, cursors and resources.
+
+When available, `name` uses Yandex `display_name`, then `real_name`, then the actual
+`login`. `email` comes only from the current Yandex `default_email`, and `nickname`
+uses that address or the actual login. Missing or malformed display values are
+omitted; no email address is constructed from a login. No hardcoded account or
+service name substitutes for a Yandex profile.
+
+The profile lookup resolves and refreshes the current request's credentials, calls
+Yandex ID, and verifies that the returned subject matches the subject saved during
+authorization before returning metadata. Existing Disk and Mail grants already
+store this subject and need no migration or reconnect to populate display fields.
+Yandex's standard `id` and `login` fields require no new upstream scope; the existing
+Mail `login:email` grant supplies its optional address. The Disk and Mail OAuth
+permission requests are unchanged. No profile metadata cache or shared account
+selector is used. Missing credentials or subject, a mismatched account, an unavailable
+identity endpoint or an invalid identity response produces a sanitized authentication
+error without a placeholder ID or upstream secrets.
+
+After a server update, refresh the app's tools in ChatGPT so it can discover this
+profile contract. This server change preserves existing OAuth grants.
+
 ## Process configuration and isolation
 
 Use [.env.disk.example](../.env.disk.example) and [.env.mail.example](../.env.mail.example)

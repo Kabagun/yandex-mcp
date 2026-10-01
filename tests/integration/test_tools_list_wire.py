@@ -1,5 +1,6 @@
 """Exercise SDK result validation on the authenticated HTTP wire, not list_tools alone."""
 
+import json
 from typing import Any, cast
 from unittest.mock import AsyncMock, call
 
@@ -8,11 +9,37 @@ import pytest
 from mcp.types import CLIENT_CAPABILITIES_META_KEY, PROTOCOL_VERSION_META_KEY
 from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS, MODERN_PROTOCOL_VERSIONS
 
-from yandex_workspace_mcp.auth.models import AccessTokenRecord
+from yandex_workspace_mcp.auth.models import AccessTokenRecord, DownstreamCredentialRecord
 from yandex_workspace_mcp.config import Settings
 from yandex_workspace_mcp.server import ApplicationDependencies, create_application, create_http_app
 
 PROTOCOLS = (*HANDSHAKE_PROTOCOL_VERSIONS, *MODERN_PROTOCOL_VERSIONS)
+
+
+async def _initialize(http: httpx.AsyncClient, protocol: str) -> None:
+    handshake = (
+        HANDSHAKE_PROTOCOL_VERSIONS[-1] if protocol in MODERN_PROTOCOL_VERSIONS else protocol
+    )
+    response = await http.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": handshake,
+                "capabilities": {},
+                "clientInfo": {"name": "profile-wire-regression", "version": "1"},
+            },
+        },
+    )
+    assert response.status_code == 200 and "error" not in response.json(), response.text
+    http.headers["MCP-Protocol-Version"] = handshake
+    response = await http.post(
+        "/mcp", json={"jsonrpc": "2.0", "method": "notifications/initialized"}
+    )
+    assert response.status_code == 202
+    http.headers["MCP-Protocol-Version"] = protocol
 
 
 def _settings(profile: str) -> Settings:
@@ -152,13 +179,27 @@ async def test_authenticated_tools_list_serializes_for_every_supported_protocol(
         assert {tool["name"] for tool in tools} == expected
         assert tools
         if profile == "mail":
-            assert all(tool["name"].startswith("mail_") for tool in tools)
+            assert all(
+                tool["name"] == "get_profile" or tool["name"].startswith("mail_") for tool in tools
+            )
         if profile == "disk":
             assert not any(tool["name"].startswith(("mail_", "wiki_")) for tool in tools)
         for tool in tools:
             assert tool["inputSchema"]["type"] == "object"
             if "outputSchema" in tool:
                 assert tool["outputSchema"]["type"] == "object"
+        account_profile = next(tool for tool in tools if tool["name"] == "get_profile")
+        assert account_profile["_meta"]["openai/profile"] is True
+        assert account_profile["_meta"]["securitySchemes"] == [{"type": "oauth2", "scopes": []}]
+        assert account_profile["annotations"]["readOnlyHint"] is True
+        assert account_profile["inputSchema"]["properties"] == {}
+        assert account_profile["inputSchema"]["additionalProperties"] is False
+        if "outputSchema" in account_profile:
+            schema = account_profile["outputSchema"]
+            assert schema["type"] == "object" and schema["additionalProperties"] is False
+            assert schema["required"] == ["id"]
+            assert set(schema["properties"]) == {"id", "name", "email", "nickname"}
+            assert all(value["type"] == "string" for value in schema["properties"].values())
         # Recursive schemas must retain their definitions and reference, not be
         # replaced by an unconstrained object just to make serialization pass.
         if (
@@ -174,3 +215,112 @@ async def test_authenticated_tools_list_serializes_for_every_supported_protocol(
             assert schema["$defs"]["DiskResource"]["additionalProperties"] is False
     assert not upstream_requests
     assert all(client.method_calls == [call.close()] for client in clients)
+
+
+@pytest.mark.parametrize("profile", ["disk", "mail"])
+@pytest.mark.parametrize("protocol", ["2025-06-18", "2025-11-25", *MODERN_PROTOCOL_VERSIONS])
+async def test_authenticated_profile_result_and_errors_on_wire(profile: str, protocol: str) -> None:
+    identity: dict[str, Any] = {"id": "account-alice", "login": "alice.login"}
+    if profile == "mail":
+        identity["default_email"] = "alice@example.org"
+    upstream_requests: list[httpx.Request] = []
+
+    def upstream(request: httpx.Request) -> httpx.Response:
+        upstream_requests.append(request)
+        assert str(request.url) == "https://login.yandex.ru/info?format=json"
+        assert request.headers["Authorization"] == "OAuth synthetic-yandex-secret"
+        return httpx.Response(200, json=identity)
+
+    application = create_application(
+        _settings(profile),
+        ApplicationDependencies(
+            disk_client_factory=AsyncMock,
+            mail_client_factory=AsyncMock,
+            signed_client_factory=AsyncMock,
+            oauth_http_client_factory=lambda: httpx.AsyncClient(
+                transport=httpx.MockTransport(upstream)
+            ),
+        ),
+    )
+    assert application.auth_store is not None
+    await application.auth_store.put_access_token(
+        "profile-wire-grant",
+        AccessTokenRecord(
+            client_id="profile-wire-client",
+            subject="profile-wire-principal",
+            scopes=(),
+            resource=application.settings.mcp_resource_server_url,
+            expires_at=4_000_000_000,
+        ),
+    )
+    await application.auth_store.put_downstream(
+        "profile-wire-principal",
+        DownstreamCredentialRecord(
+            principal_id="profile-wire-principal",
+            access_token="synthetic-yandex-secret",
+            yandex_subject="account-alice",
+        ),
+    )
+    http_app = create_http_app(application)
+    async with (
+        cast(Any, http_app).router.lifespan_context(http_app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=http_app),
+            base_url="http://localhost:18000",
+            headers={
+                "Authorization": "Bearer profile-wire-grant",
+                "Accept": "application/json, text/event-stream",
+            },
+        ) as http,
+    ):
+        await _initialize(http, protocol)
+
+        async def call_profile(arguments: dict[str, Any]) -> dict[str, Any]:
+            params: dict[str, Any] = {"name": "get_profile", "arguments": arguments}
+            if protocol in MODERN_PROTOCOL_VERSIONS:
+                http.headers["MCP-Method"] = "tools/call"
+                http.headers["MCP-Name"] = "get_profile"
+                params["_meta"] = {
+                    PROTOCOL_VERSION_META_KEY: protocol,
+                    CLIENT_CAPABILITIES_META_KEY: {},
+                }
+            response = await http.post(
+                "/mcp", json={"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": params}
+            )
+            assert response.status_code == 200, response.text
+            assert "synthetic-yandex-secret" not in response.text
+            body = response.json()
+            assert "error" not in body, body
+            return body["result"]
+
+        result = await call_profile({})
+        assert not result.get("isError", False), result
+        payload = result["structuredContent"]
+        assert payload["id"].strip() and payload["name"] == "alice.login"
+        assert payload["nickname"] == identity.get("default_email", "alice.login")
+        assert (payload.get("email") == "alice@example.org") is (profile == "mail")
+        assert json.loads(result["content"][0]["text"]) == payload
+
+        before = len(upstream_requests)
+        rejected = await call_profile({"account_id": "account-bob"})
+        assert rejected["isError"] is True
+        assert len(upstream_requests) == before
+
+        identity.update({"id": "account-bob", "login": "bob", "default_email": "bob@example.org"})
+        rejected = await call_profile({})
+        assert rejected["isError"] is True
+        assert "Invalid or missing authentication." in rejected["content"][0]["text"]
+        assert "bob" not in json.dumps(rejected)
+        assert "structuredContent" not in rejected
+
+        http.headers.pop("Authorization")
+        response = await http.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {"name": "get_profile", "arguments": {}},
+            },
+        )
+        assert response.status_code == 401

@@ -49,10 +49,12 @@ from .security.audit import AuditContextMiddleware
 from .security.transport import RegistrationSourceMiddleware, TrustedProxyHeadersMiddleware
 from .services.disk import DiskService
 from .services.mail import MailService
+from .services.profile import ProfileService
 from .services.wiki import WikiService
 from .services.workspace import WorkspaceService
 from .tools import register_common_tools, register_disk_tools, register_wiki_tools
 from .tools.mail import register_mail_tools
+from .tools.profile import create_profile_tool
 
 
 class StaticTokenVerifier(TokenVerifier):
@@ -99,6 +101,7 @@ class ApplicationState:
     oauth_callback: YandexOAuthCallback | None
     mail_client: Any | None = None
     mail_service: MailService | None = None
+    profile_service: ProfileService | None = None
 
 
 class Application:
@@ -166,6 +169,7 @@ class Application:
         ):
             raise ConfigurationError("A Yandex credential is required.")
         try:
+            profile_service = None
             if self.auth_store is not None:
                 if self.oauth_provider is None:
                     raise ConfigurationError("OAuth provider is not configured.")
@@ -203,6 +207,9 @@ class Application:
                         else ""
                     ),
                     client=self.oauth_callback.client,
+                )
+                profile_service = ProfileService(
+                    self._credential_provider, self.oauth_callback.client
                 )
             elif self.settings.yandex_auth_mode is YandexAuthMode.IAM:
                 iam_token = self.settings.yandex_iam_token
@@ -354,6 +361,7 @@ class Application:
                 oauth_callback=self.oauth_callback,
                 mail_client=mail_client,
                 mail_service=mail_service,
+                profile_service=profile_service,
             )
             return self.state
         except BaseException:
@@ -385,6 +393,12 @@ class Application:
         if not self.state or not self.state.mail_service:
             raise ConfigurationError("Mail service is not active.")
         return self.state.mail_service
+
+    def require_profile_service(self) -> ProfileService:
+        """Return authenticated account discovery for the active OAuth lifespan."""
+        if not self.state or not self.state.profile_service:
+            raise ConfigurationError("Authenticated profile service is not active.")
+        return self.state.profile_service
 
     def _cursor_codec(self) -> CursorCodec:
         if self.dependencies.cursor_keys:
@@ -553,6 +567,7 @@ def create_application(
         auth_server_provider=oauth_provider,
         token_verifier=token_verifier,
         lifespan=mcp_lifespan,
+        tools=[create_profile_tool(lambda: application)] if oauth_provider is not None else None,
     )
     application = Application(
         settings,

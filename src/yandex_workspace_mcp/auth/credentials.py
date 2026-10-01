@@ -84,18 +84,23 @@ class StoredCredentialProvider:
         self._locks: dict[str, anyio.Lock] = {}
 
     async def resolve(self, principal: Principal) -> YandexCredential:
-        try:
-            record = await self.store.get_downstream(principal.principal_id)
-        except TokenStoreMiss as exc:
-            raise AuthenticationError() from exc
-        if record.access_expires_at is not None and record.access_expires_at <= self._clock() + 30:
-            record = await self._refresh(principal.principal_id)
+        record = await self.resolve_record(principal)
         return YandexOAuthCredential(
             record.access_token,
             organization_id=record.organization_id,
             cloud_organization=record.cloud_organization,
             email=record.email,
         )
+
+    async def resolve_record(self, principal: Principal) -> DownstreamCredentialRecord:
+        """Resolve one request's account identity and credentials, refreshing when needed."""
+        try:
+            record = await self.store.get_downstream(principal.principal_id)
+        except TokenStoreMiss as exc:
+            raise AuthenticationError() from exc
+        if record.access_expires_at is not None and record.access_expires_at <= self._clock() + 30:
+            record = await self._refresh(principal.principal_id)
+        return record
 
     async def _refresh(self, principal_id: str) -> DownstreamCredentialRecord:
         lock = await self._principal_lock(principal_id)

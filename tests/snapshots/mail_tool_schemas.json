@@ -906,6 +906,60 @@
     }
   },
   "tools": {
+    "get_profile": {
+      "annotations": {
+        "destructive_hint": false,
+        "idempotent_hint": true,
+        "open_world_hint": false,
+        "read_only_hint": true
+      },
+      "description": "Get the current authenticated Yandex account profile",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "title": "get_profileArguments",
+        "type": "object"
+      },
+      "meta": {
+        "openai/profile": true,
+        "securitySchemes": [
+          {
+            "scopes": [],
+            "type": "oauth2"
+          }
+        ]
+      },
+      "name": "get_profile",
+      "output_schema": {
+        "additionalProperties": false,
+        "description": "An immutable account ID and optional current Yandex display metadata.",
+        "properties": {
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "id": {
+            "minLength": 1,
+            "pattern": "\\S",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "nickname": {
+            "title": "Nickname",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "AccountProfile",
+        "type": "object"
+      }
+    },
     "mail_attachment": {
       "annotations": {
         "destructive_hint": false,

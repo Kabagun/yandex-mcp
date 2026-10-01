@@ -12,9 +12,11 @@ from mcp.shared.auth import OAuthClientInformationFull
 from pydantic import AnyUrl, ValidationError
 from starlette.requests import Request
 
+from yandex_workspace_mcp.auth.models import DownstreamCredentialRecord
 from yandex_workspace_mcp.auth.scopes import expand_scope_values
 from yandex_workspace_mcp.auth.stores import TokenStoreMiss
 from yandex_workspace_mcp.config import Settings
+from yandex_workspace_mcp.models.errors import AuthenticationError
 from yandex_workspace_mcp.server import ApplicationDependencies, create_application, create_http_app
 
 
@@ -29,6 +31,7 @@ def profile_settings(profile: str, **updates) -> Settings:
         "mcp_issuer_url": f"https://{profile}.example",
         "mcp_resource_server_url": f"https://{profile}.example/mcp",
         "mcp_oauth_callback_url": f"https://{profile}.example/oauth/yandex/callback",
+        "disk_allowed_roots": ["/"],
     }
     values.update(updates)
     return Settings(**values)
@@ -77,8 +80,13 @@ async def test_profiles_only_publish_their_own_tools_and_scopes():
     assert disk_names and not any(name.startswith(("mail_", "wiki_")) for name in disk_names)
     assert "disk_empty_trash" not in disk_names
     assert "disk_restore_from_trash" in disk_names
-    assert mail_tools and all(tool.name.startswith("mail_") for tool in mail_tools)
+    assert mail_tools and all(
+        tool.name == "get_profile" or tool.name.startswith("mail_") for tool in mail_tools
+    )
     for tool in mail_tools:
+        if tool.name == "get_profile":
+            assert tool.meta and tool.meta["openai/profile"] is True
+            continue
         assert tool.meta and all(s.startswith("mail:") for s in tool.meta["required_scopes"])
     assert mail.oauth_provider and disk.oauth_provider
     assert set(mail.oauth_provider.valid_scopes) == {"mail:read", "mail:write", "mail:delete"}
@@ -415,3 +423,265 @@ async def test_revocation_adapter_keeps_confidential_client_and_ownership_checks
             )
         ).status_code == 200
         assert await app.oauth_provider.load_access_token("owned-token") is None
+
+
+async def _profile_as(app, principal_id, client_id="dynamic-client"):
+    context = auth_context_var.set(
+        AuthenticatedUser(
+            AccessToken(token="synthetic-mcp", client_id=client_id, subject=principal_id, scopes=[])
+        )
+    )
+    try:
+        result = await app.require_profile_service().get_profile(app.principal)
+        return result.model_dump(mode="json", exclude_none=True)
+    finally:
+        auth_context_var.reset(context)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("profile", ["disk", "mail"])
+async def test_profile_reads_old_grant_without_display_metadata_or_reconnect(profile):
+    account = {"id": "existing-subject", "login": "actual.login"}
+    if profile == "mail":
+        account["default_email"] = "actual@example.org"
+
+    def upstream(request):
+        assert request.headers["Authorization"] == "OAuth old-grant-token"
+        return httpx.Response(200, json=account)
+
+    app = create_application(
+        profile_settings(profile),
+        ApplicationDependencies(
+            oauth_http_client_factory=lambda: httpx.AsyncClient(
+                transport=httpx.MockTransport(upstream)
+            )
+        ),
+    )
+    record = DownstreamCredentialRecord(
+        principal_id="existing-principal",
+        access_token="old-grant-token",
+        yandex_subject="existing-subject",
+        email="previous@example.org" if profile == "mail" else None,
+    )
+    await app.auth_store.put_downstream("existing-principal", record)
+    async with app.lifespan():
+        result = await _profile_as(app, "existing-principal")
+        assert result["name"] == "actual.login"
+        assert result["nickname"] == account.get("default_email", "actual.login")
+        if profile == "mail":
+            assert result["email"] == "actual@example.org"
+        else:
+            assert set(result) == {"id", "name", "nickname"}
+        assert await app.auth_store.get_downstream("existing-principal") == record
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("profile", ["disk", "mail"])
+async def test_profile_concurrent_accounts_keep_request_local_identity(profile):
+    async def upstream(request):
+        token = request.headers["Authorization"]
+        await asyncio.sleep(0)
+        username = {"OAuth token-alice": "alice", "OAuth token-bob": "bob"}[token]
+        return httpx.Response(
+            200,
+            json={
+                "id": f"subject-{username}",
+                "login": username,
+                "display_name": f"Name {username}",
+                "default_email": f"{username}@example.org",
+            },
+        )
+
+    app = create_application(
+        profile_settings(profile),
+        ApplicationDependencies(
+            oauth_http_client_factory=lambda: httpx.AsyncClient(
+                transport=httpx.MockTransport(upstream)
+            )
+        ),
+    )
+    for username in ("alice", "bob"):
+        await app.auth_store.put_downstream(
+            username,
+            DownstreamCredentialRecord(
+                principal_id=username,
+                access_token=f"token-{username}",
+                yandex_subject=f"subject-{username}",
+            ),
+        )
+    async with app.lifespan():
+        alice, bob = await asyncio.gather(_profile_as(app, "alice"), _profile_as(app, "bob"))
+        assert alice["id"] != bob["id"]
+        for username, result in (("alice", alice), ("bob", bob)):
+            assert result["name"] == f"Name {username}"
+            assert result["email"] == result["nickname"] == f"{username}@example.org"
+            assert f"token-{username}" not in str(result)
+            assert ("bob" if username == "alice" else "alice") not in str(result)
+
+
+@pytest.mark.asyncio
+async def test_profile_id_stays_stable_on_refresh_reconnect_and_display_changes():
+    account = {"id": "immutable-subject", "login": "old.login", "display_name": "Old Name"}
+    requests = []
+
+    def upstream(request):
+        requests.append(request)
+        if request.url.host == "oauth.yandex.ru":
+            assert parse_qs(request.content.decode())["refresh_token"] == ["refresh-before"]
+            return httpx.Response(200, json={"access_token": "refreshed-token", "expires_in": 3600})
+        return httpx.Response(200, json=account)
+
+    app = create_application(
+        profile_settings("disk"),
+        ApplicationDependencies(
+            oauth_http_client_factory=lambda: httpx.AsyncClient(
+                transport=httpx.MockTransport(upstream)
+            )
+        ),
+    )
+    first_principal = app.oauth_provider.principal_id("dynamic-before", "immutable-subject")
+    reconnected_principal = app.oauth_provider.principal_id("dynamic-after", "immutable-subject")
+    assert first_principal != reconnected_principal
+    record = DownstreamCredentialRecord(
+        principal_id=first_principal,
+        access_token="initial-token",
+        refresh_token="refresh-before",
+        yandex_subject="immutable-subject",
+    )
+    await app.auth_store.put_downstream(first_principal, record)
+    async with app.lifespan():
+        first = await _profile_as(app, first_principal, "dynamic-before")
+        account.update(
+            {"login": "new.login", "display_name": "New Name", "default_email": "new@example.org"}
+        )
+        await app.auth_store.put_downstream(
+            first_principal, record.model_copy(update={"access_expires_at": 1})
+        )
+        refreshed = await _profile_as(app, first_principal, "dynamic-before")
+        assert requests[-1].headers["Authorization"] == "OAuth refreshed-token"
+        assert refreshed["name"] == "New Name" and refreshed["email"] == "new@example.org"
+        await app.auth_store.put_downstream(
+            reconnected_principal,
+            record.model_copy(
+                update={"principal_id": reconnected_principal, "access_token": "reconnected-token"}
+            ),
+        )
+        reconnected = await _profile_as(app, reconnected_principal, "dynamic-after")
+        assert first["id"] == refreshed["id"] == reconnected["id"]
+        assert requests[-1].headers["Authorization"] == "OAuth reconnected-token"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "account",
+    [{}, {"id": None}, {"id": ""}, {"id": " "}, {"id": 123}, {"id": "wrong-account"}, []],
+)
+async def test_profile_rejects_missing_invalid_or_mismatched_upstream_subject(account):
+    app = create_application(
+        profile_settings("disk"),
+        ApplicationDependencies(
+            oauth_http_client_factory=lambda: httpx.AsyncClient(
+                transport=httpx.MockTransport(lambda request: httpx.Response(200, json=account))
+            )
+        ),
+    )
+    await app.auth_store.put_downstream(
+        "alice",
+        DownstreamCredentialRecord(
+            principal_id="alice", access_token="private-token", yandex_subject="alice-subject"
+        ),
+    )
+    async with app.lifespan():
+        with pytest.raises(AuthenticationError, match="^Invalid or missing authentication\\.$"):
+            await _profile_as(app, "alice")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stored_subject", [None, "", " ", "contains\ncontrol"])
+async def test_profile_missing_stored_identity_fails_without_upstream_or_placeholder(
+    stored_subject,
+):
+    def upstream(request):
+        raise AssertionError("Missing identity must fail before contacting Yandex")
+
+    app = create_application(
+        profile_settings("disk"),
+        ApplicationDependencies(
+            oauth_http_client_factory=lambda: httpx.AsyncClient(
+                transport=httpx.MockTransport(upstream)
+            )
+        ),
+    )
+    await app.auth_store.put_downstream(
+        "alice",
+        DownstreamCredentialRecord(
+            principal_id="alice", access_token="private-token", yandex_subject=stored_subject
+        ),
+    )
+    async with app.lifespan():
+        with pytest.raises(AuthenticationError):
+            await _profile_as(app, "alice")
+        with pytest.raises(AuthenticationError):
+            await _profile_as(app, "missing-principal")
+        with pytest.raises(AuthenticationError):
+            await app.require_profile_service().get_profile(app.principal)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [401, 403, 503, 200])
+async def test_profile_unavailable_or_malformed_identity_is_sanitized(status, caplog):
+    app = create_application(
+        profile_settings("disk"),
+        ApplicationDependencies(
+            oauth_http_client_factory=lambda: httpx.AsyncClient(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        status, text="private-token private-person@example.org"
+                    )
+                )
+            )
+        ),
+    )
+    await app.auth_store.put_downstream(
+        "alice",
+        DownstreamCredentialRecord(
+            principal_id="alice", access_token="private-token", yandex_subject="alice-subject"
+        ),
+    )
+    async with app.lifespan():
+        with pytest.raises(AuthenticationError) as failure:
+            await _profile_as(app, "alice")
+        assert str(failure.value) == "Invalid or missing authentication."
+        assert "private-token" not in caplog.text
+        assert "private-person@example.org" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_profile_omits_absent_or_invalid_optional_metadata():
+    app = create_application(
+        profile_settings("disk"),
+        ApplicationDependencies(
+            oauth_http_client_factory=lambda: httpx.AsyncClient(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        json={
+                            "id": "alice-subject",
+                            "login": "\n",
+                            "display_name": 42,
+                            "real_name": " ",
+                            "default_email": "invalid",
+                        },
+                    )
+                )
+            )
+        ),
+    )
+    await app.auth_store.put_downstream(
+        "alice",
+        DownstreamCredentialRecord(
+            principal_id="alice", access_token="private-token", yandex_subject="alice-subject"
+        ),
+    )
+    async with app.lifespan():
+        assert set(await _profile_as(app, "alice")) == {"id"}
