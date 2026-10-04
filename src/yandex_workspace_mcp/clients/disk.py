@@ -38,7 +38,7 @@ def validate_yandex_signed_url(url: str) -> None:
     """Compatibility wrapper around the shared signed-link policy."""
 
     try:
-        validate_signed_url(url, allowed_suffixes=("yandex.net",))
+        validate_signed_url(url)
     except InvalidInput as exc:
         if not isinstance(url, str) or not url.startswith("https://"):
             raise APIError("Signed URL must use HTTPS") from exc

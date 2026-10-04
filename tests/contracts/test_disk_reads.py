@@ -1,9 +1,13 @@
+import ipaddress
+
 import httpx
 import pytest
 
 from yandex_workspace_mcp.clients.base import RequestCredentials
 from yandex_workspace_mcp.clients.disk import YandexDiskClient
+from yandex_workspace_mcp.clients.signed import SignedTransferClient
 from yandex_workspace_mcp.models.errors import ContractMismatchError, ResourceNotFound
+from yandex_workspace_mcp.services.disk import DiskService
 
 
 def _client(handler) -> YandexDiskClient:
@@ -84,6 +88,77 @@ async def test_disk_read_methods_use_exact_endpoints_and_typed_outputs() -> None
     }
     assert requests[0].headers["Authorization"] == "OAuth per-request"
     await client.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("host", ["downloader.disk.yandex.net", "downloader.disk.yandex.ru"])
+@pytest.mark.parametrize("operation", ["read", "download_url"])
+async def test_disk_service_accepts_official_download_hosts(host: str, operation: str) -> None:
+    url = f"https://{host}/file?signature=test-only"
+    downloads: list[httpx.Request] = []
+    resolved_hosts: list[str] = []
+
+    def api_handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params["path"] == "/Work/Programs.txt"
+        if request.url.path == "/v1/disk/resources/download":
+            return httpx.Response(200, json={"href": url, "method": "GET"})
+        assert request.url.path == "/v1/disk/resources"
+        return httpx.Response(
+            200,
+            json={
+                "name": "Programs.txt",
+                "path": "disk:/Work/Programs.txt",
+                "type": "file",
+                "mime_type": "text/plain",
+                "size": 5,
+            },
+        )
+
+    class PeerStream:
+        def get_extra_info(self, name: str):
+            return ("8.8.8.8", 443) if name == "server_addr" else None
+
+    def download_handler(request: httpx.Request) -> httpx.Response:
+        downloads.append(request)
+        return httpx.Response(
+            200,
+            content=b"hello",
+            extensions={"network_stream": PeerStream()},
+        )
+
+    async def resolver(hostname: str):
+        resolved_hosts.append(hostname)
+        return {ipaddress.ip_address("8.8.8.8")}
+
+    client = _client(api_handler)
+    signed = SignedTransferClient(
+        client=httpx.AsyncClient(transport=httpx.MockTransport(download_handler)),
+        resolver=resolver,
+    )
+    service = DiskService(
+        client,
+        ["/Work"],
+        can_read=True,
+        can_write=False,
+        can_delete=False,
+        signed_client=signed,
+    )
+    try:
+        metadata = await service.get_metadata("/Work/Programs.txt")
+        assert metadata.size == 5
+        if operation == "read":
+            assert await service.read_file("/Work/Programs.txt") == "hello"
+            assert len(downloads) == 1
+            assert str(downloads[0].url) == url
+            assert "Authorization" not in downloads[0].headers
+        else:
+            link = await service.get_download_url("/Work/Programs.txt")
+            assert str(link.download_url) == url
+            assert downloads == []
+        assert resolved_hosts == [host]
+    finally:
+        await signed.close()
+        await client.close()
 
 
 @pytest.mark.asyncio

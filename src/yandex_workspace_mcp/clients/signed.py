@@ -18,6 +18,7 @@ Resolver = Callable[[str], Awaitable[set[IPAddress]]]
 SocketOption = (
     tuple[int, int, int] | tuple[int, int, bytes | bytearray] | tuple[int, int, None, int]
 )
+_DEFAULT_ALLOWED_HOSTS = ("downloader.disk.yandex.ru",)
 
 
 class _NetworkBackend(Protocol):
@@ -106,7 +107,9 @@ def validate_signed_url(
     url: str,
     *,
     allowed_suffixes: tuple[str, ...] = ("yandex.net",),
+    allowed_hosts: tuple[str, ...] = _DEFAULT_ALLOWED_HOSTS,
 ) -> str:
+    """Accept HTTPS signed links under approved suffixes or at exact approved hosts."""
     if not isinstance(url, str) or not url:
         raise InvalidInput()
     parsed = urllib.parse.urlsplit(url)
@@ -123,10 +126,11 @@ def validate_signed_url(
     host = (parsed.hostname or "").casefold().rstrip(".")
     suffixes = tuple(value.casefold().lstrip(".").rstrip(".") for value in allowed_suffixes)
     suffix_match = any(host == suffix or host.endswith(f".{suffix}") for suffix in suffixes)
+    host_match = host in {value.casefold().rstrip(".") for value in allowed_hosts}
     if (
         parsed.scheme != "https"
         or not host
-        or not suffix_match
+        or not (suffix_match or host_match)
         or literal
         or port not in {None, 443}
         or parsed.username
@@ -163,12 +167,14 @@ class SignedTransferClient:
         client: httpx.AsyncClient | None = None,
         resolver: Resolver = _default_resolver,
         allowed_suffixes: tuple[str, ...] = ("yandex.net",),
+        allowed_hosts: tuple[str, ...] = _DEFAULT_ALLOWED_HOSTS,
         chunk_size: int = 1024 * 1024,
         max_response_bytes: int = 64 * 1024,
     ) -> None:
         self.client = client
         self.resolver = resolver
         self.allowed_suffixes = allowed_suffixes
+        self.allowed_hosts = allowed_hosts
         self.chunk_size = chunk_size
         self.max_response_bytes = max_response_bytes
         self._closed = False
@@ -195,7 +201,9 @@ class SignedTransferClient:
             yield client
 
     async def validate(self, url: str) -> tuple[str, set[IPAddress]]:
-        validated = validate_signed_url(url, allowed_suffixes=self.allowed_suffixes)
+        validated = validate_signed_url(
+            url, allowed_suffixes=self.allowed_suffixes, allowed_hosts=self.allowed_hosts
+        )
         host = urllib.parse.urlsplit(validated).hostname
         if host is None:
             raise InvalidInput()

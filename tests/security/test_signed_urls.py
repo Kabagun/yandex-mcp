@@ -3,6 +3,7 @@ import ipaddress
 import httpx
 import pytest
 
+from yandex_workspace_mcp.clients.disk import validate_yandex_signed_url
 from yandex_workspace_mcp.clients.signed import (
     SignedTransferClient,
     _PinnedNetworkBackend,
@@ -24,6 +25,22 @@ async def _public(_host: str):
 
 
 @pytest.mark.parametrize(
+    "host",
+    [
+        "downloader.disk.yandex.net",
+        "downloader.disk.yandex.ru",
+        "DOWNLOADER.DISK.YANDEX.RU",
+        "downloader.disk.yandex.ru.",
+        "storage.yandex.net",
+    ],
+)
+def test_signed_url_accepts_official_download_hosts(host: str) -> None:
+    url = f"https://{host}/file?signature=test-only"
+    assert validate_signed_url(url) == url
+    validate_yandex_signed_url(url)
+
+
+@pytest.mark.parametrize(
     "url",
     [
         "http://downloader.disk.yandex.net/file",
@@ -33,6 +50,16 @@ async def _public(_host: str):
         "https://[::ffff:127.0.0.1]/file",
         "https://downloader.disk.yandex.net/file#fragment",
         "https://downloader.disk.yandex.net.evil.test/file",
+        "http://downloader.disk.yandex.ru/file",
+        "https://user:pass@downloader.disk.yandex.ru/file",
+        "https://downloader.disk.yandex.ru:444/file",
+        "https://downloader.disk.yandex.ru/file#fragment",
+        "https://downloader.disk.yandex.ru.evil.test/file",
+        "https://evil-downloader.disk.yandex.ru/file",
+        "https://evil.downloader.disk.yandex.ru/file",
+        "https://yandex.ru/file",
+        "https://disk.yandex.ru/file",
+        "https://other.yandex.ru/file",
     ],
 )
 def test_signed_url_shape_is_strict(url: str) -> None:
@@ -41,7 +68,19 @@ def test_signed_url_shape_is_strict(url: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_signed_validation_rejects_mixed_public_private_dns() -> None:
+async def test_signed_download_host_allowlist_can_be_overridden() -> None:
+    url = "https://downloader.disk.yandex.ru/file"
+    with pytest.raises(InvalidInput):
+        validate_signed_url(url, allowed_hosts=())
+    client = SignedTransferClient(resolver=_public, allowed_hosts=())
+    with pytest.raises(InvalidInput):
+        await client.validate(url)
+    await client.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("host", ["downloader.disk.yandex.net", "downloader.disk.yandex.ru"])
+async def test_signed_validation_rejects_mixed_public_private_dns(host: str) -> None:
     async def mixed(_host: str):
         return {ipaddress.ip_address("8.8.8.8"), ipaddress.ip_address("10.0.0.1")}
 
@@ -50,12 +89,13 @@ async def test_signed_validation_rejects_mixed_public_private_dns() -> None:
         resolver=mixed,
     )
     with pytest.raises(PermissionDenied):
-        await client.validate("https://downloader.disk.yandex.net/file?secret=value")
+        await client.validate(f"https://{host}/file?secret=value")
     await client.close()
 
 
 @pytest.mark.asyncio
-async def test_signed_download_is_tokenless_peer_checked_and_bounded() -> None:
+@pytest.mark.parametrize("host", ["downloader.disk.yandex.net", "downloader.disk.yandex.ru"])
+async def test_signed_download_is_tokenless_peer_checked_and_bounded(host: str) -> None:
     requests: list[httpx.Request] = []
 
     async def handler(request: httpx.Request) -> httpx.Response:
@@ -76,16 +116,14 @@ async def test_signed_download_is_tokenless_peer_checked_and_bounded() -> None:
         ),
         resolver=_public,
     )
-    assert (
-        await client.download("https://downloader.disk.yandex.net/file?secret=value", max_bytes=5)
-        == b"hello"
-    )
+    assert await client.download(f"https://{host}/file?secret=value", max_bytes=5) == b"hello"
     assert requests[0].headers.get("Authorization") is None
     await client.close()
 
 
 @pytest.mark.asyncio
-async def test_signed_download_rejects_redirect_peer_mismatch_and_oversize() -> None:
+@pytest.mark.parametrize("host", ["downloader.disk.yandex.net", "downloader.disk.yandex.ru"])
+async def test_signed_download_rejects_redirect_peer_mismatch_and_oversize(host: str) -> None:
     responses = iter(
         [
             httpx.Response(302, headers={"Location": "https://evil.test/"}),
@@ -114,9 +152,7 @@ async def test_signed_download_rejects_redirect_peer_mismatch_and_oversize() -> 
     )
     for _ in range(3):
         with pytest.raises(PermissionDenied):
-            await client.download(
-                "https://downloader.disk.yandex.net/file?secret=value", max_bytes=5
-            )
+            await client.download(f"https://{host}/file?secret=value", max_bytes=5)
     await client.close()
 
 
