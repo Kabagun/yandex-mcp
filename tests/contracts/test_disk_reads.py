@@ -93,8 +93,12 @@ async def test_disk_read_methods_use_exact_endpoints_and_typed_outputs() -> None
 @pytest.mark.asyncio
 @pytest.mark.parametrize("host", ["downloader.disk.yandex.net", "downloader.disk.yandex.ru"])
 @pytest.mark.parametrize("operation", ["read", "download_url"])
-async def test_disk_service_accepts_official_download_hosts(host: str, operation: str) -> None:
+@pytest.mark.parametrize("redirect_to_storage", [False, True])
+async def test_disk_service_accepts_official_download_hosts(
+    host: str, operation: str, redirect_to_storage: bool
+) -> None:
     url = f"https://{host}/file?signature=test-only"
+    storage_url = "https://test.storage.yandex.net/file?signature=test-only"
     downloads: list[httpx.Request] = []
     resolved_hosts: list[str] = []
 
@@ -120,6 +124,13 @@ async def test_disk_service_accepts_official_download_hosts(host: str, operation
 
     def download_handler(request: httpx.Request) -> httpx.Response:
         downloads.append(request)
+        if redirect_to_storage and str(request.url) == url:
+            return httpx.Response(
+                302,
+                headers={"Location": storage_url},
+                extensions={"network_stream": PeerStream()},
+            )
+        assert str(request.url) == (storage_url if redirect_to_storage else url)
         return httpx.Response(
             200,
             content=b"hello",
@@ -148,14 +159,17 @@ async def test_disk_service_accepts_official_download_hosts(host: str, operation
         assert metadata.size == 5
         if operation == "read":
             assert await service.read_file("/Work/Programs.txt") == "hello"
-            assert len(downloads) == 1
-            assert str(downloads[0].url) == url
-            assert "Authorization" not in downloads[0].headers
+            expected_urls = [url, storage_url] if redirect_to_storage else [url]
+            assert [str(request.url) for request in downloads] == expected_urls
+            assert all("Authorization" not in request.headers for request in downloads)
         else:
             link = await service.get_download_url("/Work/Programs.txt")
             assert str(link.download_url) == url
             assert downloads == []
-        assert resolved_hosts == [host]
+        expected_hosts = [host]
+        if operation == "read" and redirect_to_storage:
+            expected_hosts.append("test.storage.yandex.net")
+        assert resolved_hosts == expected_hosts
     finally:
         await signed.close()
         await client.close()

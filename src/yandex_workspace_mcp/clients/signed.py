@@ -19,6 +19,7 @@ SocketOption = (
     tuple[int, int, int] | tuple[int, int, bytes | bytearray] | tuple[int, int, None, int]
 )
 _DEFAULT_ALLOWED_HOSTS = ("downloader.disk.yandex.ru",)
+_MAX_DOWNLOAD_REDIRECTS = 3
 
 
 class _NetworkBackend(Protocol):
@@ -270,34 +271,50 @@ class SignedTransferClient:
             await response.aclose()
 
     async def download(self, url: str, *, max_bytes: int) -> bytes:
+        """Fetch bounded bytes, validating and pinning each of at most three redirects."""
         if max_bytes < 0:
             raise InvalidInput()
-        validated, addresses = await self.validate(url)
-        async with self._client_for(validated, addresses) as client:
-            request = client.build_request("GET", validated)
-            self._strip_credentials(request)
-            response = await client.send(request, stream=True)
-            try:
-                if 300 <= response.status_code < 400:
-                    raise PermissionDenied()
-                self._validate_peer(response, addresses)
-                if response.status_code < 200 or response.status_code >= 300:
-                    raise UpstreamUnavailable()
-                declared = response.headers.get("Content-Length")
-                if declared is not None:
-                    try:
-                        if int(declared) > max_bytes:
+        redirects = 0
+        while True:
+            validated, addresses = await self.validate(url)
+            async with self._client_for(validated, addresses) as client:
+                request = client.build_request("GET", validated)
+                self._strip_credentials(request)
+                response = await client.send(
+                    request, stream=True, auth=None, follow_redirects=False
+                )
+                try:
+                    self._validate_peer(response, addresses)
+                    if 300 <= response.status_code < 400:
+                        location = response.headers.get("Location")
+                        if (
+                            response.status_code not in {301, 302, 303, 307, 308}
+                            or redirects >= _MAX_DOWNLOAD_REDIRECTS
+                            or not location
+                            or not location.strip()
+                        ):
                             raise PermissionDenied()
-                    except ValueError as exc:
-                        raise PermissionDenied() from exc
-                content = bytearray()
-                async for chunk in response.aiter_bytes(self.chunk_size):
-                    content.extend(chunk)
-                    if len(content) > max_bytes:
-                        raise PermissionDenied()
-                return bytes(content)
-            finally:
-                await response.aclose()
+                        url = urllib.parse.urljoin(validated, location)
+                        redirects += 1
+                        continue
+                    if response.status_code < 200 or response.status_code >= 300:
+                        raise UpstreamUnavailable()
+                    declared = response.headers.get("Content-Length")
+                    if declared is not None:
+                        try:
+                            if int(declared) > max_bytes:
+                                raise PermissionDenied()
+                        except ValueError as exc:
+                            raise PermissionDenied() from exc
+                    content = bytearray()
+                    async for chunk in response.aiter_bytes(self.chunk_size):
+                        content.extend(chunk)
+                        if len(content) > max_bytes:
+                            raise PermissionDenied()
+                    return bytes(content)
+                finally:
+                    with anyio.CancelScope(shield=True):
+                        await response.aclose()
 
     @staticmethod
     def _strip_credentials(request: httpx.Request) -> None:
