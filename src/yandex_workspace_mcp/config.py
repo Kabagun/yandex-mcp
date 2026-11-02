@@ -4,6 +4,7 @@ import hmac
 import ipaddress
 import os
 from enum import StrEnum
+from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
@@ -70,6 +71,7 @@ class Settings(BaseSettings):
     # OAuth state/token persistence. Redis remains an optional dependency.
     auth_store_backend: AuthStoreBackend = AuthStoreBackend.MEMORY
     redis_url: SecretStr | None = None
+    mcp_legacy_client_aof_path: Path | None = None
 
     # Yandex Workspace Config
     yandex_disk_enabled: bool = Field(default=True)

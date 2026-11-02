@@ -6,11 +6,15 @@ import re
 import time
 from collections.abc import Callable
 from importlib import import_module
+from pathlib import Path
 from typing import Any, TypeVar
 
+import anyio
+import structlog
 from pydantic import BaseModel
 
 from ..models.errors import ConfigurationError
+from .client_migration import LegacyClientValue, read_legacy_client_aof
 from .models import (
     AccessTokenRecord,
     AuthorizationCodeRecord,
@@ -32,6 +36,23 @@ from .stores import (
 )
 
 RecordT = TypeVar("RecordT", bound=BaseModel)
+logger = structlog.get_logger()
+_PERMANENT_CLIENT_SCORE = 9_999_999_999.0
+
+
+_MIGRATE_CLIENT_SCRIPT = """
+local score = redis.call('ZSCORE', KEYS[2], KEYS[1])
+if not score or tonumber(score) ~= tonumber(ARGV[1]) then return 0 end
+if redis.call('EXISTS', KEYS[1]) == 1 then
+  redis.call('PERSIST', KEYS[1])
+  redis.call('ZADD', KEYS[2], ARGV[2], KEYS[1])
+  return 1
+end
+if ARGV[3] == '' or redis.call('EXISTS', KEYS[3]) == 1 then return 0 end
+redis.call('SET', KEYS[1], ARGV[3])
+redis.call('ZADD', KEYS[2], ARGV[2], KEYS[1])
+return 2
+"""
 
 
 _CONSUME_SCRIPT = """
@@ -111,6 +132,8 @@ class RedisTokenStore:
         prefix: str = "ywmcp:auth:v1",
         clock: Callable[[], float] = time.time,
         registration_cap: int = 100,
+        permanent_clients: bool = False,
+        legacy_client_aof_path: Path | None = None,
     ) -> None:
         if client is None:
             if not url:
@@ -131,12 +154,64 @@ class RedisTokenStore:
         self._prefix = prefix
         self._clock = clock
         self._registration_cap = registration_cap
+        self._permanent_clients = permanent_clients
+        self._legacy_client_aof_path = legacy_client_aof_path
         self._closed = False
 
     async def open(self) -> None:
         if self._closed:
             raise ConfigurationError("Redis token store is closed.")
         await self._client.ping()
+        if self._permanent_clients:
+            await self._migrate_clients()
+
+    async def _migrate_clients(self) -> None:
+        """Preserve existing clients and enroll legacy TTL losses once, before serving HTTP."""
+        marker = f"{self._prefix}:client-migration:v1"
+        archive: dict[bytes, LegacyClientValue] = {}
+        archive_path = self._legacy_client_aof_path
+        recovering = archive_path is not None and not await self._client.exists(marker)
+        if recovering and archive_path is not None:
+            db = int(self._client.connection_pool.connection_kwargs.get("db", 0))
+            archive = await anyio.to_thread.run_sync(
+                lambda: read_legacy_client_aof(archive_path, prefix=self._prefix, db=db)
+            )
+        promoted = restored = 0
+        now = self._clock()
+        async for source in self._client.scan_iter(match=f"{self._prefix}:registration-source:*"):
+            async for key, score in self._client.zscan_iter(source):
+                candidate = archive.get(key)
+                payload = b""
+                # Redis rewrites EX seconds as PXAT; ceil-based TTL rounds up by <1 second.
+                if (
+                    candidate is not None
+                    and score <= now
+                    and candidate.expires_at <= now
+                    and abs(candidate.expires_at - score) <= 1.1
+                ):
+                    payload = candidate.payload
+                if not re.fullmatch(
+                    re.escape(f"{self._prefix}:client:".encode()) + rb"[0-9a-f]{64}", key
+                ):
+                    continue
+                result = await self._client.eval(
+                    _MIGRATE_CLIENT_SCRIPT,
+                    3,
+                    key,
+                    source,
+                    marker,
+                    score,
+                    _PERMANENT_CLIENT_SCORE,
+                    payload,
+                )
+                promoted += result == 1
+                restored += result == 2
+        # PERSIST orphaned live clients as well: a previous registration may have pruned its index.
+        async for key in self._client.scan_iter(match=f"{self._prefix}:client:*"):
+            await self._client.persist(key)
+        if recovering:
+            await self._client.set(marker, "complete", nx=True)
+        logger.info("oauth.client_migration", preserved=promoted, restored=restored)
 
     def _redis_keys(self, kind: str, record_key: str) -> tuple[str, ...]:
         return tuple(

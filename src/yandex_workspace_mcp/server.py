@@ -541,6 +541,8 @@ def create_application(
                 url=redis_url,
                 prefix=settings.auth_storage_prefix,
                 registration_cap=settings.mcp_client_registration_cap,
+                permanent_clients=settings.mcp_client_secret_expiry_seconds == 0,
+                legacy_client_aof_path=settings.mcp_legacy_client_aof_path,
             )
         else:
             auth_store = InMemoryTokenStore(

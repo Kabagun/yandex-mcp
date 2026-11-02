@@ -22,6 +22,42 @@ docker compose --profile multi-user up --build mcp-multi-user redis
 
 Back up Redis consistently with the active encryption-key ring. Rotate by prepending a new key, restart all replicas, allow records encrypted by the previous key to expire or be rewritten, and only then remove the old key. Removing a key immediately invalidates records encrypted with it.
 
+### Upgrading registrations created with the legacy client TTL
+
+Disk and Mail use the same client migration. With the default permanent-client
+policy, startup removes Redis TTLs from existing registrations, including clients
+that have not connected recently. Their original IDs, secrets, redirects and
+scopes remain unchanged. Access tokens still expire and refresh tokens rotate.
+
+If registrations already expired before the upgrade, set
+`MCP_LEGACY_CLIENT_AOF_PATH=/var/lib/redis/appendonlydir/appendonly.aof.1.incr.aof`
+in each affected service's protected environment. Use the actual retained,
+trusted incremental AOF file and keep the original encryption keys. The service
+user needs read access. This is an explicit, one-time legacy migration; it is not
+a fallback that accepts unknown OAuth clients.
+
+Before serving requests, the migration reads a bounded AOF snapshot and restores
+only encrypted client entries in the current Redis database and profile
+namespace whose old expiry matches a retained, expired registration-source index
+entry. It also follows a known `COPY` from a legacy namespace when the encrypted
+value, original expiry and client-key HMAC are preserved. Atomic writes preserve
+current registrations. A permanent completion
+marker prevents a later restart from restoring a registration deleted after the
+migration. Normal client lookup still authenticates the encrypted record and
+validates its original metadata and secret. No user grants or tokens are restored.
+
+An AOF `DEL` does not record whether deletion came from expiry or an operator, so
+this option deliberately enrolls matching legacy expired registrations. Enable
+it only for a trusted deployment where this recovery is intended. An unreadable,
+malformed or oversized archive fails startup without marking the migration done.
+Incomplete final writes are ignored. After successful migration the archive path
+can be removed from the environment.
+
+Recovery requires the historical encrypted value and its source-index evidence.
+An AOF rewrite or a newer registration may have removed them. If either is gone,
+the old client secret cannot be reconstructed; a new server connection must be
+registered. Backups of Redis and the encryption keys remain necessary.
+
 ## Operational boundaries
 
 - Local descriptor upload and background job tools are intentionally absent over HTTP and in multi-user mode.
