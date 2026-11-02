@@ -1,10 +1,11 @@
 import base64
 import hashlib
 import hmac
+import math
 import secrets
 import time
 from collections.abc import Callable, MutableMapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Protocol, TypeVar
 
 import anyio
@@ -93,6 +94,24 @@ class _StoredRecord:
     kind: str
     encrypted: EncryptedRecord
     expires_at: float | None
+    scheduled_at: float | None = None
+
+
+class _DownstreamRefreshLocator(BaseModel):
+    principal_id: str
+    expires_at: float | None = None
+
+
+_DOWNSTREAM_REFRESH_KIND = "downstream-refresh"
+_REFRESH_CLAIM_SECONDS = 300
+_MAX_REFRESH_CLAIM_LIMIT = 1000
+
+
+def _validate_downstream_record(principal_id: str, record: DownstreamCredentialRecord) -> None:
+    if not hmac.compare_digest(principal_id, record.principal_id):
+        raise ConfigurationError("Downstream credential principal mismatch.")
+    if record.refresh_after is not None and not math.isfinite(record.refresh_after):
+        raise ConfigurationError("Downstream refresh time must be finite.")
 
 
 class TokenStore(Protocol):
@@ -150,6 +169,25 @@ class TokenStore(Protocol):
     async def get_downstream(self, principal_id: str) -> DownstreamCredentialRecord: ...
 
     async def delete_downstream(self, principal_id: str) -> None: ...
+
+    async def replace_downstream(
+        self,
+        principal_id: str,
+        expected: DownstreamCredentialRecord,
+        replacement: DownstreamCredentialRecord,
+    ) -> bool:
+        """Atomically replace a matching current grant and its refresh schedule."""
+        ...
+
+    async def delete_downstream_if_current(
+        self, principal_id: str, expected: DownstreamCredentialRecord
+    ) -> bool:
+        """Atomically delete a matching current grant and its refresh schedule."""
+        ...
+
+    async def list_due_downstream(self, *, limit: int = 100) -> list[str]:
+        """Claim due refresh jobs for five minutes, returning at most 1,000 principal IDs."""
+        ...
 
     async def put_recovery(
         self, handle: str, principal_id: str, record: RecoveryHandleRecord
@@ -355,17 +393,120 @@ class InMemoryTokenStore:
                         self._records.pop(lookup, None)
 
     async def put_downstream(self, principal_id: str, record: DownstreamCredentialRecord) -> None:
-        if not hmac.compare_digest(principal_id, record.principal_id):
-            raise ConfigurationError("Downstream credential principal mismatch.")
-        await self._put("downstream", principal_id, record)
+        _validate_downstream_record(principal_id, record)
+        async with self._lock:
+            self._put_downstream_locked(principal_id, record)
+
+    def _put_downstream_locked(self, principal_id: str, record: DownstreamCredentialRecord) -> None:
+        self._put_locked("downstream", principal_id, record)
+        self._delete_refresh_schedule_locked(principal_id)
+        if record.refresh_token and record.refresh_after is not None:
+            member = self._lookup_candidates(_DOWNSTREAM_REFRESH_KIND, principal_id)[0]
+            locator = _DownstreamRefreshLocator(
+                principal_id=principal_id, expires_at=record.expires_at
+            )
+            self._records[member] = _StoredRecord(
+                kind=_DOWNSTREAM_REFRESH_KIND,
+                encrypted=self._codec.encrypt(
+                    _DOWNSTREAM_REFRESH_KIND, member, locator.model_dump_json().encode()
+                ),
+                expires_at=record.expires_at,
+                scheduled_at=record.refresh_after,
+            )
 
     async def get_downstream(self, principal_id: str) -> DownstreamCredentialRecord:
         return await self._get("downstream", principal_id, DownstreamCredentialRecord)
 
     async def delete_downstream(self, principal_id: str) -> None:
         async with self._lock:
-            for lookup in self._lookup_candidates("downstream", principal_id):
-                self._records.pop(lookup, None)
+            self._delete_downstream_locked(principal_id)
+
+    def _delete_downstream_locked(self, principal_id: str) -> None:
+        for lookup in self._lookup_candidates("downstream", principal_id):
+            self._records.pop(lookup, None)
+        self._delete_refresh_schedule_locked(principal_id)
+
+    async def replace_downstream(
+        self,
+        principal_id: str,
+        expected: DownstreamCredentialRecord,
+        replacement: DownstreamCredentialRecord,
+    ) -> bool:
+        """Replace only the expected current grant; a revoked grant is never recreated."""
+        _validate_downstream_record(principal_id, replacement)
+        async with self._lock:
+            if not self._matches_downstream_locked(principal_id, expected):
+                return False
+            self._put_downstream_locked(principal_id, replacement)
+            return True
+
+    async def delete_downstream_if_current(
+        self, principal_id: str, expected: DownstreamCredentialRecord
+    ) -> bool:
+        """Delete only the expected current grant, preserving any newer authorization."""
+        async with self._lock:
+            if not self._matches_downstream_locked(principal_id, expected):
+                return False
+            self._delete_downstream_locked(principal_id)
+            return True
+
+    def _matches_downstream_locked(
+        self, principal_id: str, expected: DownstreamCredentialRecord
+    ) -> bool:
+        try:
+            return (
+                self._get_locked("downstream", principal_id, DownstreamCredentialRecord)[1]
+                == expected
+            )
+        except TokenStoreMiss:
+            return False
+
+    def _delete_refresh_schedule_locked(self, principal_id: str) -> None:
+        for member in self._lookup_candidates(_DOWNSTREAM_REFRESH_KIND, principal_id):
+            self._records.pop(member, None)
+
+    async def list_due_downstream(self, *, limit: int = 100) -> list[str]:
+        """Atomically lease due refresh jobs for 300 seconds; cap each claim at 1,000."""
+        limit = min(max(limit, 0), _MAX_REFRESH_CLAIM_LIMIT)
+        async with self._lock:
+            if self._closed:
+                raise TokenStoreMiss()
+            now = self._clock()
+            due = sorted(
+                (
+                    (raw.scheduled_at, member, raw)
+                    for member, raw in self._records.items()
+                    if isinstance(raw, _StoredRecord)
+                    and raw.kind == _DOWNSTREAM_REFRESH_KIND
+                    and raw.scheduled_at is not None
+                    and raw.scheduled_at <= now
+                ),
+                key=lambda item: (item[0], item[1]),
+            )[:limit]
+            principals: list[str] = []
+            for _, member, raw in due:
+                try:
+                    if raw.expires_at is not None and raw.expires_at <= now:
+                        raise TokenStoreMiss()
+                    locator = _DownstreamRefreshLocator.model_validate_json(
+                        self._codec.decrypt(_DOWNSTREAM_REFRESH_KIND, member, raw.encrypted)
+                    )
+                    if member not in self._lookup_candidates(
+                        _DOWNSTREAM_REFRESH_KIND, locator.principal_id
+                    ):
+                        raise TokenStoreMiss()
+                    record = self._get_locked(
+                        "downstream", locator.principal_id, DownstreamCredentialRecord
+                    )[1]
+                    if not record.refresh_token or record.refresh_after is None:
+                        raise TokenStoreMiss()
+                except (TokenStoreMiss, ValueError, TypeError):
+                    self._records.pop(member, None)
+                    continue
+                self._records[member] = replace(raw, scheduled_at=now + _REFRESH_CLAIM_SECONDS)
+                if record.refresh_after <= now:
+                    principals.append(locator.principal_id)
+            return principals
 
     async def put_recovery(
         self, handle: str, principal_id: str, record: RecoveryHandleRecord

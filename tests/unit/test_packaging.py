@@ -6,7 +6,7 @@ def test_supported_python_range_and_build_dependencies() -> None:
     data = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
 
     assert data["project"]["requires-python"] == ">=3.12,<3.14"
-    assert "mcp[cli]>=2.0.0,<3.0.0" in data["project"]["dependencies"]
+    assert "mcp[cli]>=2.3.0,<3.0.0" in data["project"]["dependencies"]
     assert "cryptography>=44" in data["project"]["dependencies"]
     assert "build>=1.2" in data["dependency-groups"]["dev"]
 

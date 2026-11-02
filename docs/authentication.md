@@ -18,6 +18,16 @@ Set both auth modes to `multi-user`, configure a Yandex OAuth application, and r
 
 Yandex tokens are AES-GCM encrypted at rest. Store keys and lookup keys are keyed hashes, state and authorization codes are single-use, and access/refresh pairs are issued and rotated atomically by the backend. Revocation removes the pair. Recovery handles use the same encrypted Redis backend in multi-user mode, remain available across replicas, and are consumed atomically with principal-bound lookup keys. The first `MCP_TOKEN_ENCRYPTION_KEYS` key encrypts new records; all listed keys decrypt old records, enabling staged rotation. Non-loopback multi-user mode requires Redis and the `multi-user` package extra.
 
+### Authorization lifetime
+
+Client registrations, MCP refresh tokens and encrypted Yandex grants have no server-imposed expiry by default. Access tokens still expire after one hour; refresh rotation, scope/resource checks and explicit revocation remain enforced. A non-expiring confidential client advertises `client_secret_expires_at=0` in the registration response.
+
+`MCP_CLIENT_SECRET_EXPIRY_SECONDS`, `MCP_REFRESH_TOKEN_TTL_SECONDS` and `MCP_DOWNSTREAM_CREDENTIAL_TTL_SECONDS` accept `0` for this policy or positive seconds for a finite lifetime. Update any previously configured nonzero client lifetime when adopting the persistent policy. An intact legacy registration or grant adopts the configured policy on normal access; already expired/deleted records cannot be reconstructed and require one reconnect after deployment. Legacy grants without a refresh schedule enroll on first use.
+
+The application lifespan renews scheduled Yandex grants in the background, before upstream expiry and at least once every sixty days, including when no MCP tools are called. A five-minute claim lease limits concurrent maintenance and retries failed jobs. Schedule locators are encrypted, opaque keyed hashes identify jobs, and Disk/Mail namespaces and key rings remain separate. Maintenance stops before its HTTP client and token store close.
+
+Timeouts, connection errors, rate limits, server errors and malformed refresh responses preserve the existing grant. Only a definitive `invalid_grant` response invalidates a rejected refresh grant; invalid application credentials are reported as configuration failures. Mail preserves these sanitized provider errors instead of relabeling every failure as missing authorization. Provider revocation or upstream token expiry can still require a new login.
+
 Generate independent 32-byte base64url secrets for cursor signing and token encryption:
 
 ```bash

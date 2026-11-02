@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import json
 import math
+import re
 import time
 from collections.abc import Callable
 from importlib import import_module
@@ -19,7 +20,16 @@ from .models import (
     RecoveryHandleRecord,
     RefreshTokenRecord,
 )
-from .stores import EncryptedRecord, EncryptedRecordCodec, TokenStoreMiss
+from .stores import (
+    _DOWNSTREAM_REFRESH_KIND,
+    _MAX_REFRESH_CLAIM_LIMIT,
+    _REFRESH_CLAIM_SECONDS,
+    EncryptedRecord,
+    EncryptedRecordCodec,
+    TokenStoreMiss,
+    _DownstreamRefreshLocator,
+    _validate_downstream_record,
+)
 
 RecordT = TypeVar("RecordT", bound=BaseModel)
 
@@ -65,6 +75,26 @@ else
   redis.call('SET', KEYS[1], ARGV[1])
 end
 redis.call('ZADD', KEYS[2], ARGV[6], ARGV[3])
+return true
+"""
+
+_CLAIM_DOWNSTREAM_SCRIPT = """
+local limit = math.min(math.max(tonumber(ARGV[3]) or 0, 0), 1000)
+if limit == 0 then return {} end
+local members = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', ARGV[1], 'LIMIT', 0, limit)
+for _, member in ipairs(members) do
+  redis.call('ZADD', KEYS[1], ARGV[2], member)
+end
+return members
+"""
+
+_DISCARD_DOWNSTREAM_SCRIPT = """
+local score = redis.call('ZSCORE', KEYS[1], ARGV[1])
+if not score or tonumber(score) ~= tonumber(ARGV[2]) then return false end
+local value = redis.call('GET', KEYS[2])
+if (value or '') ~= ARGV[3] then return false end
+redis.call('ZREM', KEYS[1], ARGV[1])
+redis.call('DEL', KEYS[2])
 return true
 """
 
@@ -330,15 +360,159 @@ class RedisTokenStore:
             await self._client.delete(*keys)
 
     async def put_downstream(self, principal_id: str, record: DownstreamCredentialRecord) -> None:
-        if principal_id != record.principal_id:
-            raise ConfigurationError("Downstream credential principal mismatch.")
-        await self._put("downstream", principal_id, record)
+        if self._closed:
+            raise TokenStoreMiss()
+        _validate_downstream_record(principal_id, record)
+        pipeline = self._client.pipeline(transaction=True)
+        self._queue_put_downstream(pipeline, principal_id, record)
+        await pipeline.execute()
+
+    def _queue_put_downstream(
+        self, pipeline: Any, principal_id: str, record: DownstreamCredentialRecord
+    ) -> None:
+        candidates = self._redis_keys("downstream", principal_id)
+        locators = self._redis_keys(_DOWNSTREAM_REFRESH_KIND, principal_id)
+        members = tuple(key.rsplit(":", 1)[1] for key in locators)
+        ttl = self._ttl(record.expires_at)
+        payload = self._encode("downstream", principal_id, record)
+        locator_payload = None
+        if record.refresh_token and record.refresh_after is not None:
+            locator_payload = self._encode(
+                _DOWNSTREAM_REFRESH_KIND,
+                members[0],
+                _DownstreamRefreshLocator(principal_id=principal_id, expires_at=record.expires_at),
+            )
+        self._queue_delete_downstream(pipeline, principal_id)
+        pipeline.set(candidates[0], payload, ex=ttl)
+        if locator_payload is not None:
+            pipeline.set(locators[0], locator_payload, ex=ttl)
+            pipeline.zadd(self._refresh_schedule_key, {members[0]: record.refresh_after})
 
     async def get_downstream(self, principal_id: str) -> DownstreamCredentialRecord:
         return await self._get("downstream", principal_id, DownstreamCredentialRecord)
 
     async def delete_downstream(self, principal_id: str) -> None:
-        await self._client.delete(*self._redis_keys("downstream", principal_id))
+        pipeline = self._client.pipeline(transaction=True)
+        self._queue_delete_downstream(pipeline, principal_id)
+        await pipeline.execute()
+
+    def _queue_delete_downstream(self, pipeline: Any, principal_id: str) -> None:
+        locators = self._redis_keys(_DOWNSTREAM_REFRESH_KIND, principal_id)
+        pipeline.delete(*self._redis_keys("downstream", principal_id), *locators)
+        pipeline.zrem(self._refresh_schedule_key, *(key.rsplit(":", 1)[1] for key in locators))
+
+    async def replace_downstream(
+        self,
+        principal_id: str,
+        expected: DownstreamCredentialRecord,
+        replacement: DownstreamCredentialRecord,
+    ) -> bool:
+        """Replace only the expected current grant; a revoked grant is never recreated."""
+        _validate_downstream_record(principal_id, replacement)
+        return await self._mutate_downstream_if_current(principal_id, expected, replacement)
+
+    async def delete_downstream_if_current(
+        self, principal_id: str, expected: DownstreamCredentialRecord
+    ) -> bool:
+        """Delete only the expected current grant, preserving any newer authorization."""
+        return await self._mutate_downstream_if_current(principal_id, expected, None)
+
+    async def _mutate_downstream_if_current(
+        self,
+        principal_id: str,
+        expected: DownstreamCredentialRecord,
+        replacement: DownstreamCredentialRecord | None,
+    ) -> bool:
+        if self._closed:
+            return False
+        watch_error = import_module("redis.exceptions").WatchError
+        candidates = self._redis_keys("downstream", principal_id)
+        async with self._client.pipeline(transaction=True) as pipeline:
+            try:
+                await pipeline.watch(*candidates)
+                payloads = await pipeline.mget(*candidates)
+                payload = next((payload for payload in payloads if payload is not None), None)
+                if payload is None:
+                    return False
+                current = self._decode(
+                    "downstream", principal_id, payload, DownstreamCredentialRecord
+                )
+                if current != expected or (
+                    current.expires_at is not None and current.expires_at <= self._clock()
+                ):
+                    return False
+                pipeline.multi()
+                if replacement is None:
+                    self._queue_delete_downstream(pipeline, principal_id)
+                else:
+                    self._queue_put_downstream(pipeline, principal_id, replacement)
+                await pipeline.execute()
+                return True
+            except (watch_error, TokenStoreMiss):
+                return False
+
+    @property
+    def _refresh_schedule_key(self) -> str:
+        return f"{self._prefix}:downstream-refresh-due"
+
+    async def list_due_downstream(self, *, limit: int = 100) -> list[str]:
+        """Atomically lease due refresh jobs for 300 seconds; cap each claim at 1,000."""
+        if self._closed:
+            raise TokenStoreMiss()
+        now = self._clock()
+        lease_until = now + _REFRESH_CLAIM_SECONDS
+        members = await self._client.eval(
+            _CLAIM_DOWNSTREAM_SCRIPT,
+            1,
+            self._refresh_schedule_key,
+            now,
+            lease_until,
+            min(max(limit, 0), _MAX_REFRESH_CLAIM_LIMIT),
+        )
+        principals: list[str] = []
+        for raw_member in members:
+            try:
+                member = raw_member.decode("ascii") if isinstance(raw_member, bytes) else raw_member
+                if not isinstance(member, str) or not re.fullmatch(r"[0-9a-f]{64}", member):
+                    raise ValueError()
+            except (ValueError, UnicodeDecodeError):
+                await self._client.zrem(self._refresh_schedule_key, raw_member)
+                continue
+            locator_key = f"{self._prefix}:{_DOWNSTREAM_REFRESH_KIND}:{member}"
+            payload = await self._client.get(locator_key)
+            try:
+                if payload is None:
+                    raise TokenStoreMiss()
+                locator = self._decode(
+                    _DOWNSTREAM_REFRESH_KIND, member, payload, _DownstreamRefreshLocator
+                )
+                if locator.expires_at is not None and locator.expires_at <= now:
+                    raise TokenStoreMiss()
+                candidates = self._redis_keys(_DOWNSTREAM_REFRESH_KIND, locator.principal_id)
+                if locator_key not in candidates:
+                    raise TokenStoreMiss()
+                record = await self.get_downstream(locator.principal_id)
+                if (
+                    not record.refresh_token
+                    or record.refresh_after is None
+                    or (record.expires_at is not None and record.expires_at <= now)
+                ):
+                    raise TokenStoreMiss()
+            except TokenStoreMiss:
+                # Compare both lease and ciphertext so a concurrent refresh cannot be erased.
+                await self._client.eval(
+                    _DISCARD_DOWNSTREAM_SCRIPT,
+                    2,
+                    self._refresh_schedule_key,
+                    locator_key,
+                    member,
+                    lease_until,
+                    payload if payload is not None else b"",
+                )
+                continue
+            if record.refresh_after <= now:
+                principals.append(locator.principal_id)
+        return principals
 
     async def put_recovery(
         self, handle: str, principal_id: str, record: RecoveryHandleRecord

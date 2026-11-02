@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
 
+import anyio
+import structlog
 from mcp.server import MCPServer
 from mcp.server.auth.middleware.client_auth import ClientAuthenticator
 from mcp.server.auth.provider import AccessToken, TokenVerifier
@@ -57,15 +59,22 @@ from .tools import register_common_tools, register_disk_tools, register_wiki_too
 from .tools.mail import register_mail_tools
 from .tools.profile import create_profile_tool
 
+logger = structlog.get_logger()
+
 
 class StaticTokenVerifier(TokenVerifier):
-    def __init__(self, expected_token: str, scopes: list[str] | None = None):
+    def __init__(
+        self, expected_token: str, scopes: list[str] | None = None, *, resource: str | None = None
+    ):
         self.expected_token = expected_token
         self.scopes = scopes or []
+        self.resource = resource
 
     async def verify_token(self, token: str) -> AccessToken | None:
         if hmac.compare_digest(token, self.expected_token):
-            return AccessToken(token=token, client_id="static-client", scopes=self.scopes)
+            return AccessToken(
+                token=token, client_id="static-client", scopes=self.scopes, resource=self.resource
+            )
         return None
 
 
@@ -146,7 +155,15 @@ class Application:
     async def lifespan(self) -> AsyncIterator[ApplicationState]:
         state = await self.open()
         try:
-            yield state
+            if isinstance(self._credential_provider, StoredCredentialProvider):
+                async with anyio.create_task_group() as tasks:
+                    tasks.start_soon(self._credential_provider.maintain)
+                    try:
+                        yield state
+                    finally:
+                        tasks.cancel_scope.cancel()
+            else:
+                yield state
         finally:
             await self.close()
 
@@ -199,6 +216,7 @@ class Application:
                     cloud_organization=self.settings.yandex_wiki_is_cloud_org,
                     client=callback_client,
                     require_email=self.settings.yandex_mail_enabled,
+                    downstream_ttl_seconds=self.settings.mcp_downstream_credential_ttl_seconds,
                 )
                 self._opened_resources.append(self.oauth_callback)
                 self._credential_provider = StoredCredentialProvider(
@@ -210,6 +228,13 @@ class Application:
                         else ""
                     ),
                     client=self.oauth_callback.client,
+                    credential_ttl_seconds=self.settings.mcp_downstream_credential_ttl_seconds,
+                )
+                logger.info(
+                    "oauth.lifetime_policy",
+                    client_secret_expiry_seconds=self.settings.mcp_client_secret_expiry_seconds,
+                    refresh_ttl_seconds=self.settings.mcp_refresh_token_ttl_seconds,
+                    downstream_ttl_seconds=self.settings.mcp_downstream_credential_ttl_seconds,
                 )
                 profile_service = ProfileService(
                     self._credential_provider, self.oauth_callback.client
@@ -536,6 +561,7 @@ def create_application(
                 else ()
             ),
             client_secret_expiry_seconds=settings.mcp_client_secret_expiry_seconds,
+            refresh_ttl_seconds=settings.mcp_refresh_token_ttl_seconds,
         )
 
     @contextlib.asynccontextmanager
@@ -554,22 +580,25 @@ def create_application(
         token_verifier = StaticTokenVerifier(
             settings.mcp_auth_token.get_secret_value(),
             scopes=[scope.value for scope in principal_scopes],
+            resource=settings.mcp_resource_server_url,
         )
         auth_settings = AuthSettings(
             issuer_url=AnyHttpUrl(settings.mcp_issuer_url),
             resource_server_url=AnyHttpUrl(settings.mcp_resource_server_url),
             required_scopes=[],
+            validate_token_resource=True,
         )
     elif settings.mcp_auth_mode is McpAuthMode.MULTI_USER:
         auth_settings = AuthSettings(
             issuer_url=AnyHttpUrl(settings.mcp_issuer_url),
             resource_server_url=AnyHttpUrl(settings.mcp_resource_server_url),
             required_scopes=[],
+            validate_token_resource=True,
             client_registration_options=ClientRegistrationOptions(
                 enabled=True,
                 valid_scopes=list(oauth_provider.valid_scopes) if oauth_provider else [],
                 default_scopes=list(oauth_provider.valid_scopes) if oauth_provider else [],
-                client_secret_expiry_seconds=settings.mcp_client_secret_expiry_seconds,
+                client_secret_expiry_seconds=settings.mcp_client_secret_expiry_seconds or None,
             ),
             revocation_options=RevocationOptions(enabled=True),
         )

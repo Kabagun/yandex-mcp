@@ -2,6 +2,7 @@ import base64
 import contextvars
 import hashlib
 import hmac
+import math
 import secrets
 import time
 import urllib.parse
@@ -27,6 +28,7 @@ from starlette.requests import Request as StarletteRequest
 from starlette.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from starlette.types import Message
 
+from yandex_workspace_mcp.auth.credentials import next_refresh_time
 from yandex_workspace_mcp.auth.models import (
     AccessTokenRecord,
     AuthContext,
@@ -119,8 +121,8 @@ class YandexMcpOAuthProvider(
         state_ttl_seconds: int = 600,
         code_ttl_seconds: int = 300,
         access_ttl_seconds: int = 3600,
-        refresh_ttl_seconds: int = 30 * 24 * 3600,
-        client_secret_expiry_seconds: int = 30 * 24 * 3600,
+        refresh_ttl_seconds: int = 0,
+        client_secret_expiry_seconds: int = 0,
     ) -> None:
         self.store = store
         self.issuer_url = issuer_url.rstrip("/")
@@ -142,6 +144,12 @@ class YandexMcpOAuthProvider(
             record = await self.store.get_client(client_id)
         except TokenStoreMiss:
             return None
+        if self._client_secret_expiry == 0 and record.client_secret_expires_at:
+            metadata = {**record.metadata, "client_secret_expires_at": 0}
+            record = record.model_copy(
+                update={"expires_at": None, "client_secret_expires_at": None, "metadata": metadata}
+            )
+            await self.store.put_client(record)
         if record.client_secret_expires_at and record.client_secret_expires_at <= self._clock():
             return None
         try:
@@ -175,8 +183,9 @@ class YandexMcpOAuthProvider(
         metadata = client_info.model_dump(mode="json")
         metadata["scope"] = " ".join(requested_scopes)
         if client_info.client_secret:
-            expires_at = self._clock() + self._client_secret_expiry
-            metadata["client_secret_expires_at"] = int(expires_at)
+            if self._client_secret_expiry:
+                expires_at = self._clock() + self._client_secret_expiry
+            metadata["client_secret_expires_at"] = int(expires_at) if expires_at else 0
         record = OAuthClientRecord(
             client_id=client_info.client_id,
             client_secret=client_info.client_secret,
@@ -366,7 +375,7 @@ class YandexMcpOAuthProvider(
         access_value = self._random_token(32)
         refresh_value = self._random_token(32)
         access_expiry = self._clock() + self._access_ttl
-        refresh_expiry = self._clock() + self._refresh_ttl
+        refresh_expiry = self._clock() + self._refresh_ttl if self._refresh_ttl else None
         new_refresh = RefreshTokenRecord(
             client_id=client.client_id,
             scopes=tuple(effective_scopes),
@@ -440,7 +449,7 @@ class YandexMcpOAuthProvider(
         access_value = self._random_token(32)
         refresh_value = self._random_token(32)
         access_expiry = self._clock() + self._access_ttl
-        refresh_expiry = self._clock() + self._refresh_ttl
+        refresh_expiry = self._clock() + self._refresh_ttl if self._refresh_ttl else None
         access_record = AccessTokenRecord(
             client_id=client_id,
             scopes=tuple(scopes),
@@ -519,7 +528,7 @@ class YandexOAuthCallback:
         require_email: bool = False,
         client: httpx.AsyncClient | None = None,
         clock: Callable[[], float] = time.time,
-        downstream_ttl_seconds: int = 30 * 24 * 3600,
+        downstream_ttl_seconds: int = 0,
     ) -> None:
         self.provider = provider
         self.store = store
@@ -570,7 +579,12 @@ class YandexOAuthCallback:
                 raise ValueError("missing access token")
             if refresh_token is not None and not isinstance(refresh_token, str):
                 raise ValueError("invalid refresh token")
-            if not isinstance(expires_in, int | float) or expires_in <= 0:
+            if (
+                isinstance(expires_in, bool)
+                or not isinstance(expires_in, int | float)
+                or not math.isfinite(expires_in)
+                or expires_in <= 0
+            ):
                 raise ValueError("invalid expiry")
 
             account_response = await self.client.get(
@@ -604,8 +618,13 @@ class YandexOAuthCallback:
                 principal_id=principal_id,
                 access_token=access_token,
                 refresh_token=refresh_token,
-                expires_at=self._clock() + self._downstream_ttl,
+                expires_at=(self._clock() + self._downstream_ttl if self._downstream_ttl else None),
                 access_expires_at=self._clock() + float(expires_in),
+                refresh_after=(
+                    next_refresh_time(self._clock(), self._clock() + float(expires_in))
+                    if refresh_token
+                    else None
+                ),
                 organization_id=self.organization_id,
                 cloud_organization=self.cloud_organization,
                 yandex_subject=yandex_subject,

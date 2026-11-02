@@ -175,6 +175,11 @@ class YandexMailClient:
     async def _credential(self) -> YandexOAuthCredential:
         try:
             credential = await self._credential_provider()
+        except YandexWorkspaceError as exc:
+            raise exc from None
+        except Exception:  # noqa: BLE001 -- provider responses must remain private.
+            raise AuthenticationError() from None
+        try:
             if not isinstance(credential, YandexOAuthCredential):
                 raise TypeError()
             _address(credential.email or "")

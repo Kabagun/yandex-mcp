@@ -63,7 +63,9 @@ class Settings(BaseSettings):
     mcp_trusted_proxy_cidrs: list[str] = Field(default_factory=list)
     mcp_max_request_body_bytes: int = Field(default=2 * 1024 * 1024, ge=1)
     mcp_client_registration_cap: int = Field(default=100, ge=1, le=10_000)
-    mcp_client_secret_expiry_seconds: int = Field(default=30 * 24 * 3600, ge=60)
+    mcp_client_secret_expiry_seconds: int = Field(default=0, ge=0)
+    mcp_refresh_token_ttl_seconds: int = Field(default=0, ge=0)
+    mcp_downstream_credential_ttl_seconds: int = Field(default=0, ge=0)
 
     # OAuth state/token persistence. Redis remains an optional dependency.
     auth_store_backend: AuthStoreBackend = AuthStoreBackend.MEMORY

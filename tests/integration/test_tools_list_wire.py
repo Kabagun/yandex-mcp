@@ -208,10 +208,13 @@ async def test_authenticated_tools_list_serializes_for_every_supported_protocol(
         ):
             recent = next(tool for tool in tools if tool["name"] == "disk_recent")
             schema = recent["outputSchema"]
-            assert schema["$ref"] == "#/$defs/DiskResourcePage"
-            assert schema["$defs"]["DiskResourcePage"]["properties"]["items"]["items"] == {
-                "$ref": "#/$defs/DiskResource"
-            }
+            # MCP may inline the root object while retaining the recursive definitions.
+            assert schema.get("$ref", "#/$defs/DiskResourcePage") == "#/$defs/DiskResourcePage"
+            expected_root = schema["$defs"]["DiskResourcePage"]
+            root = expected_root if "$ref" in schema else schema
+            assert all(root[key] == value for key, value in expected_root.items())
+            assert root["additionalProperties"] is False
+            assert root["properties"]["items"]["items"] == {"$ref": "#/$defs/DiskResource"}
             assert schema["$defs"]["DiskResource"]["additionalProperties"] is False
     assert not upstream_requests
     assert all(client.method_calls == [call.close()] for client in clients)

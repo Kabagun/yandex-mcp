@@ -127,6 +127,7 @@ class DownstreamCredentialRecord(AuthRecord):
     refresh_token: str | None = None
     expires_at: float | None = None
     access_expires_at: float | None = None
+    refresh_after: float | None = None
     organization_id: str | None = None
     cloud_organization: bool = False
     yandex_subject: str | None = None

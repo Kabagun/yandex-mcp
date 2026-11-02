@@ -12,6 +12,8 @@
 6. **Upload jobs (`jobs/uploads.py`)**: Application-owned, bounded trusted-local state with atomic terminal transitions, TTL/eviction, descriptor ownership, and shutdown cancellation.
 7. **Authentication (`auth/oauth.py`, `auth/stores.py`)**: Keeps MCP OAuth state/tokens separate from encrypted per-principal Yandex credentials. Shared API clients resolve a new immutable credential at request time and have no default authorization header in multi-user mode.
 
+OAuth registrations and grants persist until revoked by default, while hourly access tokens are renewed through rotating refresh tokens. The application lifespan owns a cancellable maintenance task for idle Yandex grants. An encrypted locator index schedules proactive renewal, and atomic five-minute claims bound concurrent maintenance without exposing principal IDs in Redis keys or members. Successful renewal replaces the grant and schedule together; transient provider failures retain the grant for retry.
+
 Wire models tolerate additive upstream fields. Stable public MCP models explicitly map reviewed fields and forbid unknown properties, so Yandex additions cannot silently expand tool schemas.
 
 ## Key Decisions

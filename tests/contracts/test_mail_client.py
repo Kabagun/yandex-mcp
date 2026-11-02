@@ -29,6 +29,7 @@ from yandex_workspace_mcp.models.errors import (
     RevisionConflict,
     UpstreamTimeout,
     UpstreamUnavailable,
+    YandexWorkspaceError,
 )
 from yandex_workspace_mcp.models.mail import (
     MailMessageRef,
@@ -397,6 +398,49 @@ async def test_auth_failures_and_missing_email_fail_closed(transports) -> None:
     with pytest.raises(AuthenticationError):
         await YandexMailClient(credential_provider=provider).folders()
     factory.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "error_type",
+    [YandexWorkspaceError, AuthenticationError, APIError, UpstreamUnavailable, UpstreamTimeout],
+)
+@pytest.mark.parametrize("operation", ["folders", "send"])
+async def test_public_credential_errors_survive_without_opening_mail_transport(
+    transports, error_type, operation
+) -> None:
+    _, _, imap_factory, smtp_factory = transports
+    failure = error_type()
+
+    async def provider():
+        raise failure from ValueError("private-token secret provider response")
+
+    mail = YandexMailClient(credential_provider=provider)
+    with pytest.raises(error_type) as captured:
+        if operation == "send":
+            await mail.send(MailOutgoingMessage(to=["recipient@example.test"]))
+        else:
+            await mail.folders()
+    assert captured.value is failure
+    assert captured.value.__suppress_context__
+    assert "private-token" not in str(captured.value)
+    imap_factory.assert_not_called()
+    smtp_factory.assert_not_called()
+
+
+async def test_unknown_credential_error_is_redacted_without_opening_mail_transport(
+    transports,
+) -> None:
+    _, _, imap_factory, smtp_factory = transports
+
+    async def provider():
+        raise RuntimeError("private-token secret provider response")
+
+    with pytest.raises(AuthenticationError) as captured:
+        await YandexMailClient(credential_provider=provider).folders()
+    assert "private-token" not in str(captured.value)
+    assert captured.value.__suppress_context__
+    imap_factory.assert_not_called()
+    smtp_factory.assert_not_called()
 
 
 async def test_trash_uses_only_one_uid_move_without_global_expunge(transports) -> None:

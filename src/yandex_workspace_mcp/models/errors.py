@@ -2,6 +2,8 @@ import re
 import urllib.parse
 from typing import Any
 
+from mcp.server.mcpserver.exceptions import ToolError
+
 from .base import PublicModel
 
 
@@ -24,7 +26,7 @@ class HeaderMismatchError(MCPError):
     pass
 
 
-class YandexWorkspaceError(MCPError):
+class YandexWorkspaceError(MCPError, ToolError):
     category = "workspace_error"
     retryable = False
 
