@@ -72,6 +72,7 @@ class Settings(BaseSettings):
     auth_store_backend: AuthStoreBackend = AuthStoreBackend.MEMORY
     redis_url: SecretStr | None = None
     mcp_legacy_client_aof_path: Path | None = None
+    mcp_client_recovery_ids: list[str] = Field(default_factory=list)
 
     # Yandex Workspace Config
     yandex_disk_enabled: bool = Field(default=True)

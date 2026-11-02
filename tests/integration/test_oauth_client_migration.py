@@ -1,5 +1,6 @@
 """Legacy DCR recovery checks use an opt-in Redis and synthetic encrypted AOF only."""
 
+import json
 import os
 import time
 from dataclasses import dataclass
@@ -155,6 +156,29 @@ def _settings(profile="disk", **updates) -> Settings:
     return Settings(**values)
 
 
+async def _reset_client_archive(
+    namespace, tmp_path, scope="workspace:read", permanent=False
+) -> LegacyClient:
+    legacy = await _expired_client(namespace, tmp_path, scope)
+    redis, prefix = namespace
+    if permanent:
+        legacy.record = _record(None, scope)
+        store = _store(namespace, legacy)
+        legacy.aof.write_bytes(
+            _resp(
+                "SET", legacy.key, store._encode("client", legacy.record.client_id, legacy.record)
+            )
+        )
+    keys = [key async for key in redis.scan_iter(match=f"{prefix}:*")]
+    await redis.delete(*keys)
+    await redis.set(f"{prefix}:client-migration:v1", "complete")
+    return legacy
+
+
+def _receipt(namespace, legacy: LegacyClient) -> str:
+    return f"{namespace[1]}:client-recovery:v1:{legacy.key.rsplit(':', 1)[1]}"
+
+
 @pytest.mark.parametrize("profile,scope", [("disk", "workspace:read"), ("mail", "mail:read")])
 @pytest.mark.parametrize("history", ["set", "copy"])
 async def test_cached_clients_authorize_with_original_secret_after_expired_key_recovery(
@@ -271,7 +295,12 @@ async def test_finite_policy_does_not_restore_missing_keys_or_persist_live_keys(
 ) -> None:
     legacy = await _expired_client(namespace, tmp_path)
     redis, prefix = namespace
-    finite = _store(namespace, legacy, permanent_clients=False)
+    finite = _store(
+        namespace,
+        legacy,
+        permanent_clients=False,
+        client_recovery_ids=(legacy.record.client_id,),
+    )
     live = _record(legacy.now + 120, client_id="live-finite-client")
     await finite.put_client(live)
     # put_client cleans old source scores; keep this candidate's original proof for the test.
@@ -281,6 +310,7 @@ async def test_finite_policy_does_not_restore_missing_keys_or_persist_live_keys(
     assert not await redis.exists(legacy.key)
     assert await redis.ttl(live_key) > 0
     assert not await redis.exists(f"{prefix}:client-migration:v1")
+    assert not await redis.exists(_receipt(namespace, legacy))
 
 
 async def test_migration_preserves_a_newer_live_registration_payload(namespace, tmp_path) -> None:
@@ -373,7 +403,173 @@ def test_application_passes_migration_policy_to_redis(
             redis_url="redis://127.0.0.1:6379/15",
             mcp_client_secret_expiry_seconds=ttl,
             mcp_legacy_client_aof_path=path,
+            mcp_client_recovery_ids=["synthetic-cached-client"],
         )
     )
     assert captured["permanent_clients"] is permanent
     assert captured["legacy_client_aof_path"] == path
+    assert captured["client_recovery_ids"] == ("synthetic-cached-client",)
+
+
+@pytest.mark.parametrize("profile,scope", [("disk", "workspace:read"), ("mail", "mail:read")])
+@pytest.mark.parametrize("permanent", [False, True], ids=["expired", "permanent"])
+async def test_allowlisted_cached_client_survives_full_auth_reset_and_old_migration_marker(
+    namespace, tmp_path, profile, scope, permanent
+) -> None:
+    legacy = await _reset_client_archive(namespace, tmp_path, scope, permanent)
+    redis, prefix = namespace
+    assert await redis.exists(legacy.source_key) == 0
+    assert await redis.exists(legacy.key) == 0
+    assert await redis.exists(f"{prefix}:client-migration:v1")
+    store = _store(namespace, legacy, client_recovery_ids=(legacy.record.client_id,))
+
+    def no_upstream(_request):
+        raise AssertionError("Client recovery must not contact an upstream account.")
+
+    application = create_application(
+        _settings(profile),
+        ApplicationDependencies(
+            auth_store_factory=lambda: store,
+            oauth_http_client_factory=lambda: httpx.AsyncClient(
+                transport=httpx.MockTransport(no_upstream)
+            ),
+        ),
+    )
+    async with (
+        application.lifespan(),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=create_http_app(application)),
+            base_url=f"https://{profile}.example",
+        ) as http,
+    ):
+        authorized = await http.get(
+            "/authorize",
+            params={
+                "client_id": legacy.record.client_id,
+                "redirect_uri": legacy.record.redirect_uris[0],
+                "response_type": "code",
+                "code_challenge": "synthetic-pkce-challenge",
+                "scope": scope,
+                "resource": f"https://{profile}.example/mcp",
+            },
+        )
+        assert authorized.status_code == 302
+        assert urlsplit(authorized.headers["location"]).hostname == "oauth.yandex.ru"
+        fields = {
+            "grant_type": "synthetic-unsupported-grant",
+            "client_id": legacy.record.client_id,
+            "client_secret": legacy.record.client_secret,
+        }
+        accepted = await http.post("/token", data=fields)
+        assert accepted.status_code == 400 and accepted.json()["error"] != "invalid_client"
+        rejected = await http.post("/token", data={**fields, "client_secret": "incorrect-secret"})
+        assert rejected.status_code == 401 and rejected.json()["error"] == "invalid_client"
+        restored = await store.get_client(legacy.record.client_id)
+        assert restored.expires_at is None and restored.client_secret_expires_at is None
+        assert restored.metadata["client_secret_expires_at"] == 0
+        assert restored.client_secret == legacy.record.client_secret
+        assert restored.redirect_uris == legacy.record.redirect_uris
+        assert restored.allowed_scopes == legacy.record.allowed_scopes
+        assert await redis.ttl(legacy.key) == -1
+        assert await redis.ttl(_receipt(namespace, legacy)) == -1
+
+
+async def test_explicit_recovery_excludes_unlisted_clients_and_is_not_repeated_after_deletion(
+    namespace, tmp_path
+) -> None:
+    legacy = await _reset_client_archive(namespace, tmp_path, permanent=True)
+    redis, _ = namespace
+    store = _store(namespace, legacy, client_recovery_ids=(legacy.record.client_id,))
+    unlisted = _record(None, client_id="unlisted-client")
+    unlisted_key = store._redis_keys("client", unlisted.client_id)[0]
+    legacy.aof.write_bytes(
+        legacy.aof.read_bytes()
+        + _resp("SET", unlisted_key, store._encode("client", unlisted.client_id, unlisted))
+    )
+    await store.open()
+    assert await redis.exists(legacy.key)
+    assert not await redis.exists(unlisted_key)
+    assert await redis.exists(_receipt(namespace, legacy))
+    await redis.delete(legacy.key)
+    legacy.aof.unlink()
+    await _store(namespace, legacy, client_recovery_ids=(legacy.record.client_id,)).open()
+    assert not await redis.exists(legacy.key)
+    assert not await redis.exists(unlisted_key)
+
+
+async def test_explicit_recovery_preserves_a_newer_payload_and_records_its_receipt(
+    namespace, tmp_path
+) -> None:
+    legacy = await _reset_client_archive(namespace, tmp_path)
+    redis, _ = namespace
+    store = _store(namespace, legacy, client_recovery_ids=(legacy.record.client_id,))
+    current = _record(None, secret="new-current-secret")
+    await store.put_client(current)
+    encrypted_before = await redis.get(legacy.key)
+    await store.open()
+    assert await redis.get(legacy.key) == encrypted_before
+    assert (await store.get_client(current.client_id)).client_secret == current.client_secret
+    assert await redis.exists(_receipt(namespace, legacy))
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "wrong-key",
+        "tampered",
+        "record-id",
+        "metadata-id",
+        "secret-mismatch",
+        "redirect-mismatch",
+        "scope-mismatch",
+        "missing-archive",
+    ],
+)
+async def test_explicit_recovery_rejects_untrusted_or_unavailable_archive_without_receipt(
+    namespace, tmp_path, failure
+) -> None:
+    legacy = await _reset_client_archive(namespace, tmp_path, permanent=True)
+    redis, prefix = namespace
+    store = _store(namespace, legacy, client_recovery_ids=(legacy.record.client_id,))
+    record = legacy.record
+    encoder = store
+    if failure == "wrong-key":
+        encoder = RedisTokenStore((b"w" * 32,), client=redis, prefix=prefix)
+    elif failure == "record-id":
+        record = record.model_copy(update={"client_id": "different-client"})
+    elif failure == "metadata-id":
+        record = record.model_copy(
+            update={"metadata": {**record.metadata, "client_id": "different-client"}}
+        )
+    elif failure == "secret-mismatch":
+        record = record.model_copy(
+            update={"metadata": {**record.metadata, "client_secret": "different-secret"}}
+        )
+    elif failure == "redirect-mismatch":
+        record = record.model_copy(
+            update={
+                "metadata": {
+                    **record.metadata,
+                    "redirect_uris": ["https://untrusted.example/callback"],
+                }
+            }
+        )
+    elif failure == "scope-mismatch":
+        record = record.model_copy(
+            update={"metadata": {**record.metadata, "scope": "workspace:write"}}
+        )
+    payload = encoder._encode("client", legacy.record.client_id, record)
+    if failure == "tampered":
+        envelope = json.loads(payload)
+        ciphertext = envelope["ciphertext"]
+        envelope["ciphertext"] = ("A" if ciphertext[0] != "A" else "B") + ciphertext[1:]
+        payload = json.dumps(envelope).encode()
+    legacy.aof.write_bytes(_resp("SET", legacy.key, payload))
+    if failure == "missing-archive":
+        legacy.aof.unlink()
+    with pytest.raises(ConfigurationError) as captured:
+        await store.open()
+    assert legacy.record.client_secret is not None
+    assert legacy.record.client_secret not in str(captured.value)
+    assert not await redis.exists(legacy.key)
+    assert not await redis.exists(_receipt(namespace, legacy))

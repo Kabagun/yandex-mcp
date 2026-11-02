@@ -58,6 +58,30 @@ An AOF rewrite or a newer registration may have removed them. If either is gone,
 the old client secret cannot be reconstructed; a new server connection must be
 registered. Backups of Redis and the encryption keys remain necessary.
 
+### Reconnecting users and recovering a cleared client registry
+
+Keep OAuth client registrations when resetting a user's authorization. ChatGPT
+reuses its saved client ID and secret during reconnect; clearing the server's
+client registry does not make ChatGPT register another client. Reset only user
+grants, tokens and pending authorization state. Preserve `client`,
+`registration-source`, `client-migration` and `client-recovery` records.
+
+If the client registry was already deliberately cleared, an operator can restore
+specific original clients from a trusted AOF using
+`MCP_CLIENT_RECOVERY_IDS=["original-client-id"]` together with
+`MCP_LEGACY_CLIENT_AOF_PATH`. Configure these in the environment source actually
+loaded by the service. For systemd credentials, update the JSON source named by
+`LoadCredential`, rather than a retired `.env` file.
+
+This explicit recovery also reads permanent client values and works after the
+source index was cleared. It authenticates the encrypted record against the
+selected original ID and validates its original metadata before preserving its
+secret, redirects and scopes. It never invents a client or accepts an unknown ID.
+Each selected ID has an atomic, durable recovery receipt; subsequent restarts
+cannot restore it again after deletion. Current registrations are preserved.
+After recovery, remove the recovery settings and restart. User grants remain
+cleared, so the user signs in again using their existing connection.
+
 ## Operational boundaries
 
 - Local descriptor upload and background job tools are intentionally absent over HTTP and in multi-user mode.

@@ -1,4 +1,4 @@
-"""Bounded, read-only recovery of expired encrypted OAuth clients from a Redis AOF."""
+"""Bounded, read-only recovery of encrypted OAuth clients from a Redis AOF."""
 
 import re
 from dataclasses import dataclass, field
@@ -25,11 +25,11 @@ _SINGLE_KEY_MUTATIONS = frozenset(
 
 @dataclass(frozen=True, slots=True)
 class LegacyClientValue:
-    """An opaque encrypted client value and its original absolute expiry."""
+    """An opaque encrypted client value and its original expiry, or None for no TTL."""
 
     redis_key: bytes = field(repr=False)
     payload: bytes = field(repr=False)
-    expires_at: float
+    expires_at: float | None
 
 
 class _InvalidAof(Exception):
@@ -87,10 +87,11 @@ def _read_command(data: bytes, position: int) -> tuple[tuple[bytes, ...], int]:
 
 
 class _ClientReplay:
-    def __init__(self, prefix: str, db: int) -> None:
+    def __init__(self, prefix: str, db: int, *, include_permanent: bool = False) -> None:
         self.namespace = prefix.encode() + b":client:"
         self.target_db = db
         self.current_db = 0
+        self.include_permanent = include_permanent
         self.clients: dict[bytes, LegacyClientValue] = {}
         self.known: dict[tuple[int, bytes], LegacyClientValue] = {}
 
@@ -187,7 +188,7 @@ class _ClientReplay:
         if command == b"DEL":
             if len(arguments) < 2:
                 raise _InvalidAof()
-            # Redis emits DEL on expiry; eligibility is checked against the live source index.
+            # Redis emits DEL on expiry; candidate eligibility is checked separately by the caller.
             for key in arguments[1:]:
                 self.known.pop((self.current_db, key), None)
             return
@@ -199,7 +200,8 @@ class _ClientReplay:
             if len(arguments) == 5 and arguments[3].upper() == b"PXAT":
                 expires_at = _unsigned_decimal(arguments[4]) / 1000
             self._exclude((key,))
-            if expires_at is not None and self._client_digest(key) is not None:
+            permanent = self.include_permanent and len(arguments) == 3
+            if (expires_at is not None or permanent) and self._client_digest(key) is not None:
                 value = LegacyClientValue(key, arguments[2], expires_at)
                 self.known[(self.current_db, key)] = value
                 if self.current_db == self.target_db and self._is_client_key(key):
@@ -234,12 +236,15 @@ class _ClientReplay:
         self._exclude(arguments[1:])
 
 
-def read_legacy_client_aof(path: Path, *, prefix: str, db: int) -> dict[bytes, LegacyClientValue]:
+def read_legacy_client_aof(
+    path: Path, *, prefix: str, db: int, include_permanent: bool = False
+) -> dict[bytes, LegacyClientValue]:
     """Read at most 64 MiB/10,000 commands, recovering SET PXAT values and exact known copies.
 
     Bulk strings are capped at 1 MiB. A truncated final command and any unfinished
     transaction are ignored. This parser never connects to Redis or changes the source file;
-    callers must separately verify expiry and membership in the surviving client source index.
+    callers must separately verify candidate eligibility. Permanent SET values are included
+    only when include_permanent=True, for recovery restricted by an explicit operator allowlist.
     """
     try:
         if not isinstance(db, int) or db < 0:
@@ -248,7 +253,7 @@ def read_legacy_client_aof(path: Path, *, prefix: str, db: int) -> dict[bytes, L
             data = source.read(_MAX_AOF_BYTES + 1)
         if len(data) > _MAX_AOF_BYTES:
             raise _InvalidAof()
-        replay = _ClientReplay(prefix, db)
+        replay = _ClientReplay(prefix, db, include_permanent=include_permanent)
         pending: list[tuple[bytes, ...]] | None = None
         position = 0
         count = 0

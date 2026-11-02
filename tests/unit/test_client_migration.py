@@ -26,10 +26,14 @@ def set_expiring(key: bytes = KEY, payload: bytes = PAYLOAD, expiry: int = 12345
     return resp("SET", key, payload, "PXAT", expiry)
 
 
-def parse(tmp_path: Path, data: bytes, *, db: int = 0) -> dict[bytes, LegacyClientValue]:
+def parse(
+    tmp_path: Path, data: bytes, *, db: int = 0, include_permanent: bool = False
+) -> dict[bytes, LegacyClientValue]:
     source = tmp_path / "synthetic.aof"
     source.write_bytes(data)
-    result = read_legacy_client_aof(source, prefix=PREFIX, db=db)
+    result = read_legacy_client_aof(
+        source, prefix=PREFIX, db=db, include_permanent=include_permanent
+    )
     assert source.read_bytes() == data
     return result
 
@@ -382,3 +386,107 @@ def test_values_hide_payload_and_key_from_representation() -> None:
     assert "synthetic" not in repr(value)
     with pytest.raises(AttributeError):
         value.expires_at = 1.0  # type: ignore[misc]
+
+
+def test_opt_in_permanent_set_replaces_finite_value_and_survives_del(tmp_path: Path) -> None:
+    latest = b'{"nonce":"synthetic-latest-nonce","ciphertext":"synthetic-latest-ciphertext"}'
+    data = (
+        set_expiring(KEY, b"synthetic-older-value")
+        + resp("MULTI")
+        + resp("DEL", KEY)
+        + resp("SET", KEY, latest)
+        + resp("ZADD", SOURCE_INDEX, 1234.567, KEY)
+        + resp("EXEC")
+        + resp("DEL", KEY)
+    )
+    assert parse(tmp_path, data) == {}
+    assert parse(tmp_path, data, include_permanent=True) == {
+        KEY: LegacyClientValue(KEY, latest, None)
+    }
+
+
+def test_opt_in_permanent_copy_preserves_payload_and_survives_del(tmp_path: Path) -> None:
+    data = (
+        resp("SET", LEGACY_KEY, PAYLOAD)
+        + resp("MULTI")
+        + resp("COPY", LEGACY_KEY, INTERMEDIATE_KEY)
+        + resp("COPY", INTERMEDIATE_KEY, KEY, "REPLACE")
+        + resp("ZADD", SOURCE_INDEX, 1234.567, KEY)
+        + resp("EXEC")
+        + resp("DEL", KEY, LEGACY_KEY, INTERMEDIATE_KEY)
+    )
+    assert parse(tmp_path, data) == {}
+    assert parse(tmp_path, data, include_permanent=True) == {
+        KEY: LegacyClientValue(KEY, PAYLOAD, None)
+    }
+
+
+def test_permanent_set_is_excluded_by_default(tmp_path: Path) -> None:
+    assert parse(tmp_path, resp("SET", KEY, PAYLOAD)) == {}
+    assert parse(tmp_path, resp("SET", KEY, PAYLOAD), include_permanent=True) == {
+        KEY: LegacyClientValue(KEY, PAYLOAD, None)
+    }
+
+
+def test_later_finite_set_replaces_permanent_value(tmp_path: Path) -> None:
+    data = resp("SET", KEY, b"synthetic-older-permanent") + set_expiring()
+    assert parse(tmp_path, data, include_permanent=True) == {
+        KEY: LegacyClientValue(KEY, PAYLOAD, 1234.567)
+    }
+
+
+@pytest.mark.parametrize(
+    "options",
+    [("NX",), ("EX", 300), ("PX", 300), ("KEEPTTL",), ("PXAT", 1234567, "XX")],
+)
+def test_opt_in_permanent_mode_rejects_other_set_options(tmp_path: Path, options) -> None:
+    data = (
+        resp("SET", LEGACY_KEY, PAYLOAD)
+        + resp("SET", LEGACY_KEY, PAYLOAD, *options)
+        + resp("COPY", LEGACY_KEY, KEY)
+    )
+    assert parse(tmp_path, data, include_permanent=True) == {}
+
+
+def test_deleted_permanent_source_is_not_live_for_copy(tmp_path: Path) -> None:
+    data = (
+        resp("SET", LEGACY_KEY, PAYLOAD) + resp("DEL", LEGACY_KEY) + resp("COPY", LEGACY_KEY, KEY)
+    )
+    assert parse(tmp_path, data, include_permanent=True) == {}
+
+
+def test_opt_in_permanent_mode_preserves_database_namespace_and_hmac_isolation(
+    tmp_path: Path,
+) -> None:
+    data = (
+        resp("SET", LEGACY_KEY, PAYLOAD)
+        + resp("COPY", LEGACY_KEY, SECOND_KEY)
+        + resp("SELECT", 1)
+        + resp("SET", KEY, PAYLOAD)
+        + resp("COPY", LEGACY_KEY, KEY)
+        + resp("SELECT", 0)
+        + resp("SET", KEY + b"extra", PAYLOAD)
+    )
+    assert parse(tmp_path, data, include_permanent=True) == {}
+
+
+@pytest.mark.parametrize("ending", [b"", resp("DISCARD")])
+def test_opt_in_permanent_mode_ignores_unfinished_or_discarded_transaction(
+    tmp_path: Path, ending: bytes
+) -> None:
+    data = resp("MULTI") + resp("SET", KEY, PAYLOAD) + ending
+    assert parse(tmp_path, data, include_permanent=True) == {}
+
+
+def test_permanent_payload_nonce_and_key_are_not_printed_or_exposed_by_repr(
+    tmp_path: Path, capsys
+) -> None:
+    payload = b'{"nonce":"synthetic-private-nonce","ciphertext":"synthetic-private-ciphertext"}'
+    values = parse(tmp_path, resp("SET", KEY, payload), include_permanent=True)
+    assert values[KEY].payload == payload
+    assert values[KEY].expires_at is None
+    rendered = repr(values[KEY])
+    for secret in ("synthetic-private-nonce", "synthetic-private-ciphertext", KEY.decode()):
+        assert secret not in rendered
+    captured = capsys.readouterr()
+    assert captured.out == captured.err == ""

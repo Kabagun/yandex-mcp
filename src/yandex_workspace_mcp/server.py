@@ -543,6 +543,7 @@ def create_application(
                 registration_cap=settings.mcp_client_registration_cap,
                 permanent_clients=settings.mcp_client_secret_expiry_seconds == 0,
                 legacy_client_aof_path=settings.mcp_legacy_client_aof_path,
+                client_recovery_ids=tuple(settings.mcp_client_recovery_ids),
             )
         else:
             auth_store = InMemoryTokenStore(

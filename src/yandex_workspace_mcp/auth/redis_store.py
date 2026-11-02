@@ -11,6 +11,7 @@ from typing import Any, TypeVar
 
 import anyio
 import structlog
+from mcp.shared.auth import OAuthClientInformationFull
 from pydantic import BaseModel
 
 from ..models.errors import ConfigurationError
@@ -52,6 +53,22 @@ if ARGV[3] == '' or redis.call('EXISTS', KEYS[3]) == 1 then return 0 end
 redis.call('SET', KEYS[1], ARGV[3])
 redis.call('ZADD', KEYS[2], ARGV[2], KEYS[1])
 return 2
+"""
+
+_RECOVER_CLIENT_SCRIPT = """
+if redis.call('EXISTS', KEYS[1]) == 1 then return 0 end
+for index = 4, #KEYS do
+  if redis.call('EXISTS', KEYS[index]) == 1 then
+    redis.call('SET', KEYS[1], 'existing')
+    return 0
+  end
+end
+redis.call('ZREMRANGEBYSCORE', KEYS[3], '-inf', ARGV[3])
+if redis.call('ZCARD', KEYS[3]) >= tonumber(ARGV[4]) then return -1 end
+redis.call('SET', KEYS[2], ARGV[1])
+redis.call('ZADD', KEYS[3], ARGV[2], KEYS[2])
+redis.call('SET', KEYS[1], 'recovered')
+return 1
 """
 
 
@@ -134,6 +151,7 @@ class RedisTokenStore:
         registration_cap: int = 100,
         permanent_clients: bool = False,
         legacy_client_aof_path: Path | None = None,
+        client_recovery_ids: tuple[str, ...] = (),
     ) -> None:
         if client is None:
             if not url:
@@ -156,6 +174,7 @@ class RedisTokenStore:
         self._registration_cap = registration_cap
         self._permanent_clients = permanent_clients
         self._legacy_client_aof_path = legacy_client_aof_path
+        self._client_recovery_ids = tuple(dict.fromkeys(client_recovery_ids))
         self._closed = False
 
     async def open(self) -> None:
@@ -163,7 +182,87 @@ class RedisTokenStore:
             raise ConfigurationError("Redis token store is closed.")
         await self._client.ping()
         if self._permanent_clients:
+            await self._recover_configured_clients()
             await self._migrate_clients()
+
+    async def _recover_configured_clients(self) -> None:
+        """Restore only operator-selected original clients after an authorization reset."""
+        pending: list[tuple[str, str]] = []
+        for client_id in self._client_recovery_ids:
+            receipt = (
+                f"{self._prefix}:client-recovery:v1:"
+                + self._redis_keys("client", client_id)[0].rsplit(":", 1)[1]
+            )
+            if not await self._client.exists(receipt):
+                pending.append((client_id, receipt))
+        if not pending:
+            return
+        archive_path = self._legacy_client_aof_path
+        if archive_path is None or len(pending) > self._registration_cap:
+            raise ConfigurationError("Configured OAuth client recovery source is required.")
+        db = int(self._client.connection_pool.connection_kwargs.get("db", 0))
+        archive = await anyio.to_thread.run_sync(
+            lambda: read_legacy_client_aof(
+                archive_path, prefix=self._prefix, db=db, include_permanent=True
+            )
+        )
+        recovered = 0
+        for client_id, receipt in pending:
+            candidates = self._redis_keys("client", client_id)
+            if any([await self._client.exists(key) for key in candidates]):
+                await self._client.set(receipt, "existing", nx=True)
+                continue
+            snapshot = next(
+                (archive[key.encode()] for key in candidates if key.encode() in archive), None
+            )
+            if snapshot is None:
+                raise ConfigurationError("Configured OAuth client recovery record is unavailable.")
+            try:
+                original = self._decode("client", client_id, snapshot.payload, OAuthClientRecord)
+                if (
+                    original.client_id != client_id
+                    or original.metadata.get("client_id") != client_id
+                ):
+                    raise TokenStoreMiss()
+                info = OAuthClientInformationFull.model_validate(original.metadata)
+                if (
+                    info.client_secret != original.client_secret
+                    or tuple(map(str, info.redirect_uris or ())) != original.redirect_uris
+                    or set((info.scope or "").split()) != set(original.allowed_scopes)
+                ):
+                    raise TokenStoreMiss()
+            except (TokenStoreMiss, ValueError, TypeError):
+                raise ConfigurationError(
+                    "Configured OAuth client recovery record is invalid."
+                ) from None
+            record = original.model_copy(
+                update={
+                    "expires_at": None,
+                    "client_secret_expires_at": None,
+                    "metadata": {**original.metadata, "client_secret_expires_at": 0},
+                }
+            )
+            source_hash = hmac.new(
+                self._lookup_keys[0],
+                f"registration-source\0{record.registration_source}".encode(),
+                hashlib.sha256,
+            ).hexdigest()
+            result = await self._client.eval(
+                _RECOVER_CLIENT_SCRIPT,
+                3 + len(candidates),
+                receipt,
+                candidates[0],
+                f"{self._prefix}:registration-source:{source_hash}",
+                *candidates,
+                self._encode("client", client_id, record),
+                _PERMANENT_CLIENT_SCORE,
+                self._clock(),
+                self._registration_cap,
+            )
+            if result < 0:
+                raise ConfigurationError("OAuth client registration capacity reached.")
+            recovered += result == 1
+        logger.info("oauth.configured_client_recovery", restored=recovered)
 
     async def _migrate_clients(self) -> None:
         """Preserve existing clients and enroll legacy TTL losses once, before serving HTTP."""
@@ -185,6 +284,7 @@ class RedisTokenStore:
                 # Redis rewrites EX seconds as PXAT; ceil-based TTL rounds up by <1 second.
                 if (
                     candidate is not None
+                    and candidate.expires_at is not None
                     and score <= now
                     and candidate.expires_at <= now
                     and abs(candidate.expires_at - score) <= 1.1
