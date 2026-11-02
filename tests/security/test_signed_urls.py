@@ -257,7 +257,6 @@ async def test_signed_download_pins_and_closes_a_new_transport_for_each_of_four_
     hosts = ["downloader.disk.yandex.ru"] + ["s64nrg.storage.yandex.net"] * 3
     expected_ips = ["8.8.8.8", "1.1.1.1", "9.9.9.9", "8.8.4.4"]
     bodies = [_BodyStream([b"redirect-body"]) for _ in range(3)] + [_BodyStream([b"ok"])]
-    transports: list["Transport"] = []
     dns_calls: list[str] = []
 
     async def resolver(host: str):
@@ -286,6 +285,7 @@ async def test_signed_download_pins_and_closes_a_new_transport_for_each_of_four_
         async def aclose(self) -> None:
             self.closed = True
 
+    transports: list[Transport] = []
     monkeypatch.setattr("yandex_workspace_mcp.clients.signed._PinnedAsyncHTTPTransport", Transport)
     client = SignedTransferClient(resolver=resolver)
     try:

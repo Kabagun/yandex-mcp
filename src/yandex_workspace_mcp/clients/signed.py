@@ -308,9 +308,9 @@ class SignedTransferClient:
                             raise PermissionDenied() from exc
                     content = bytearray()
                     async for chunk in response.aiter_bytes(self.chunk_size):
-                        content.extend(chunk)
-                        if len(content) > max_bytes:
+                        if len(content) + len(chunk) > max_bytes:
                             raise PermissionDenied()
+                        content.extend(chunk)
                     return bytes(content)
                 finally:
                     with anyio.CancelScope(shield=True):
