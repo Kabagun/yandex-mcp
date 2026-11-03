@@ -10,6 +10,15 @@ docker compose --profile static up --build mcp-static
 
 The unauthenticated `/healthz` response contains only `{"status":"ok"}`. `/mcp` remains bearer protected. Request bodies are capped by `MCP_MAX_REQUEST_BODY_BYTES`.
 
+Authenticated Disk/Wiki API calls share a 30-second default operation budget
+across credential resolution, HTTP attempts, response-body reading and retry
+backoff. A slowly streaming response cannot extend the call indefinitely through
+socket inactivity timeouts. Mutations and signed uploads are not replayed after
+a deadline; safe reads retain their bounded retry policy. Caller cancellation
+propagates. The deadline requires cooperative async code; it cannot preempt a
+blocking synchronous callback. Signed file transfers and IMAP/SMTP retain their
+separate transport policies.
+
 ## Multi-user
 
 Use the `multi-user` profile, durable Redis, two independent key rings, and a Yandex OAuth callback exactly matching the public callback URL. Install/run the package with `.[multi-user]` when not using the provided image.

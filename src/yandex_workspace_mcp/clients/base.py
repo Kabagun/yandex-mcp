@@ -93,22 +93,38 @@ class BaseYandexClient:
         request_headers = dict(kwargs.pop("headers", {}) or {})
         selected_credentials = credentials or self._default_credentials
         if selected_credentials is None and self._credential_provider is not None:
-            selected_credentials = await self._credential_provider()
+            remaining = operation_timeout - (self._clock() - started_at)
+            if remaining <= 0:
+                raise UpstreamTimeout()
+            try:
+                with anyio.fail_after(remaining) as credential_scope:
+                    selected_credentials = await self._credential_provider()
+            except TimeoutError:
+                if not credential_scope.cancelled_caught:
+                    raise
+                raise UpstreamTimeout() from None
         if selected_credentials:
             request_headers.update(selected_credentials.headers)
             request_headers["Authorization"] = selected_credentials.authorization
 
         last_transport_error: httpx.TransportError | None = None
         for attempt in range(max_attempts):
-            if attempt and self._clock() - started_at >= operation_timeout:
+            remaining = operation_timeout - (self._clock() - started_at)
+            if remaining <= 0:
                 raise UpstreamTimeout()
             try:
-                response = await self.client.request(
-                    method,
-                    path,
-                    headers=request_headers or None,
-                    **kwargs,
-                )
+                # HTTPX's inactivity timeouts do not bound a slowly streaming body.
+                with anyio.fail_after(remaining) as request_scope:
+                    response = await self.client.request(
+                        method,
+                        path,
+                        headers=request_headers or None,
+                        **kwargs,
+                    )
+            except TimeoutError:
+                if not request_scope.cancelled_caught:
+                    raise
+                raise UpstreamTimeout() from None
             except httpx.TransportError as exc:
                 last_transport_error = exc
                 if not safe or attempt == max_attempts - 1:
@@ -160,9 +176,16 @@ class BaseYandexClient:
                 delay = self._jitter(0.0, min(3.0, 0.5 * (2**attempt)))
         else:
             delay = self._jitter(0.0, min(3.0, 0.5 * (2**attempt)))
-        if self._clock() - started_at + delay >= operation_timeout:
+        remaining = operation_timeout - (self._clock() - started_at)
+        if delay >= remaining:
             raise UpstreamTimeout()
-        await self._sleeper(delay)
+        try:
+            with anyio.fail_after(remaining) as backoff_scope:
+                await self._sleeper(delay)
+        except TimeoutError:
+            if not backoff_scope.cancelled_caught:
+                raise
+            raise UpstreamTimeout() from None
 
     @staticmethod
     def _transport_error(error: httpx.TransportError) -> UpstreamUnavailable | UpstreamTimeout:

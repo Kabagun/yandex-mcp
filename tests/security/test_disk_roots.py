@@ -154,3 +154,29 @@ async def test_list_filters_embedded_children_and_recent_filters_every_item() ->
     assert [item.path for item in listed.embedded.items] == ["/Work/ok.txt"]
     assert [item.path for item in recent.items] == ["/Work/new.txt"]
     assert str(link.download_url).startswith("https://downloader.disk.yandex.net/")
+
+
+@pytest.mark.asyncio
+async def test_search_filters_encoded_paths_that_would_alias_an_authorized_root() -> None:
+    client = AsyncMock()
+    client.list_files.return_value = DiskResourcePage(
+        items=[
+            _resource("/Work/needle.txt"),
+            _resource("/Personal/%2E%2E/Work/needle-private.txt"),
+            _resource("/Personal%2F..%2FWork/needle-other.txt"),
+            _resource("/Work/needle%00.txt"),
+        ],
+        limit=50,
+        offset=0,
+    )
+    result = await _service(client, ["/Work"]).search("needle", limit=50, principal="person")
+    assert [item.path for item in result.items] == ["/Work/needle.txt"]
+
+
+@pytest.mark.asyncio
+async def test_encoded_mutation_path_is_rejected_before_dispatch() -> None:
+    client = AsyncMock()
+    service = DiskService(client, ["/Work"], True, True, True)
+    with pytest.raises(InvalidPath):
+        await service.delete("/Work/private%2Ffile.txt")
+    client.delete_resource.assert_not_awaited()

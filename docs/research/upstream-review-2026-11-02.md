@@ -1,5 +1,8 @@
 # Parent repository review — 2026-11-02
 
+Follow-up: [the 2026-11-03 qualification](upstream-review-2026-11-03.md) applies
+the previously deferred HTTP deadline and encoded-path fixes.
+
 The GitHub fork chain is `Kabagun/yandex-mcp` → `denis-samatov/yandex-workspace-mcp`; the parent repository is not itself a fork. Reviewed parent `main` at `cc2753d12e4235c548e1b4e90a5959cdfac0dce1`, relative to shared base `e518d82c6bd4b751af2d21f88ca41c8d4f4e0fa3`.
 
 The parent has no subsequent changes to this fork's shared OAuth implementation or Mail client, so it does not contain a fix for fixed client/grant expiry or destructive refresh-error handling. Disk and Mail share the corrected credential lifecycle in this fork.

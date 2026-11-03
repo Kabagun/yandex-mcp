@@ -8,9 +8,9 @@ By default, the server operates in a strict read-only mode (`DISK_WRITE=false`, 
 ## 2. Allowed Roots
 Agents are sandboxed to specific directories/projects via `DISK_ALLOWED_ROOTS` and `WIKI_ALLOWED_ROOTS`.
 All paths provided by the agent are:
-1. Stripped of schema prefixes.
-2. Normalized to resolve `.` and `..`.
-3. Checked for path traversal attacks (e.g. `%2e%2e`).
+1. Percent-decoded once, rejecting escaped path structure (`%`, `.`, `/`, `\`) and control bytes. Encoded UTF-8 names and spaces remain supported.
+2. Stripped of supported schema prefixes.
+3. Normalized to resolve `.` and `..`. The same policy filters paths returned by Yandex, so encoded traversal cannot make an outside resource appear inside an allowed root.
 4. Validated to ensure they fall under one of the configured `allowed_roots`.
 Operations attempting to access paths outside the whitelist will raise a `PermissionDenied` error.
 
